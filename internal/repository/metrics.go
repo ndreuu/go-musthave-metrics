@@ -56,7 +56,7 @@ func (m *MemStorage) GetGauge(name string) (float64, error) {
 	defer m.mu.RUnlock()
 	value, exists := m.gauges[name]
 	if !exists {
-		return 0, fmt.Errorf("gauge metric %%q not found", name)
+		return 0, fmt.Errorf("gauge metric not found: %s", name)
 	}
 	return value, nil
 }
@@ -69,7 +69,7 @@ func (m *MemStorage) GetCounter(name string) (int64, error) {
 	defer m.mu.RUnlock()
 	value, exists := m.counters[name]
 	if !exists {
-		return 0, fmt.Errorf("counter metric %%q not found", name)
+		return 0, fmt.Errorf("counter metric not found: %s", name)
 	}
 	return value, nil
 }
