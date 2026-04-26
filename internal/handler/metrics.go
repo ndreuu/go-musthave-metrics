@@ -1,12 +1,10 @@
 package handler
 
 import (
-	"fmt"
+	"go-musthave-metrics/internal/service"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
-	"go-musthave-metrics/internal/service"
 )
 
 type MetricsHandler struct {
@@ -73,45 +71,5 @@ func (h *MetricsHandler) GetMetricHandler(c *gin.Context) {
 
 func (h *MetricsHandler) ListMetricsHandler(c *gin.Context) {
 	metrics := h.service.GetAllMetrics()
-
-	var sb strings.Builder
-	sb.WriteString("<!DOCTYPE html>\n")
-	sb.WriteString("<html>\n<head>\n")
-	sb.WriteString("<title>Metrics</title>\n")
-	sb.WriteString("<style>\n")
-	sb.WriteString("body { font-family: Arial, sans-serif; margin: 20px; }\n")
-	sb.WriteString("table { border-collapse: collapse; width: 100%; }\n")
-	sb.WriteString("th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }\n")
-	sb.WriteString("th { background-color: #4CAF50; color: white; }\n")
-	sb.WriteString("tr:nth-child(even) { background-color: #f2f2f2; }\n")
-	sb.WriteString("</style>\n")
-	sb.WriteString("</head>\n<body>\n")
-	sb.WriteString("<h1>Metrics</h1>\n")
-
-	if len(metrics) == 0 {
-		sb.WriteString("<p>No metrics available</p>\n")
-	} else {
-		sb.WriteString("<table>\n")
-		sb.WriteString("<tr><th>Type</th><th>Name</th><th>Value</th></tr>\n")
-
-		for _, m := range metrics {
-			sb.WriteString("<tr>")
-			sb.WriteString(fmt.Sprintf("<td>%s</td>", m.MType))
-			sb.WriteString(fmt.Sprintf("<td>%s</td>", m.ID))
-			if m.MType == "gauge" && m.Value != nil {
-				sb.WriteString(fmt.Sprintf("<td>%.2f</td>", *m.Value))
-			} else if m.MType == "counter" && m.Value != nil {
-				sb.WriteString(fmt.Sprintf("<td>%d</td>", int64(*m.Value)))
-			} else {
-				sb.WriteString("<td>-</td>")
-			}
-			sb.WriteString("</tr>\n")
-		}
-
-		sb.WriteString("</table>\n")
-	}
-
-	sb.WriteString("</body>\n</html>")
-
-	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(sb.String()))
+	c.JSON(http.StatusOK, gin.H{"metrics": metrics})
 }

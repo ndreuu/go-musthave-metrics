@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 
@@ -10,7 +11,18 @@ import (
 	"go-musthave-metrics/internal/service"
 )
 
+var (
+	flagRunAddr string
+)
+
+func parseFlags() {
+	flag.StringVar(&flagRunAddr, "a", ":8080", "address and port to run server")
+	flag.Parse()
+}
+
 func main() {
+	parseFlags()
+
 	storage := repository.NewMemStorage()
 
 	metricsService := service.NewMetricsService(storage)
@@ -23,9 +35,8 @@ func main() {
 	r.GET("/value/:type/:name", metricsHandler.GetMetricHandler)
 	r.GET("/", metricsHandler.ListMetricsHandler)
 
-	addr := "localhost:8080"
-	fmt.Printf("Server starting on %s\n", addr)
-	if err := r.Run(addr); err != nil {
+	fmt.Printf("Server starting on %s\n", flagRunAddr)
+	if err := r.Run(flagRunAddr); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

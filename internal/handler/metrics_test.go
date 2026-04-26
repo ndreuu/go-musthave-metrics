@@ -187,8 +187,8 @@ func TestMetricsHandler_ListMetricsHandler_Empty(t *testing.T) {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
 	}
 
-	if w.Header().Get("Content-Type") != "text/html; charset=utf-8" {
-		t.Errorf("Expected Content-Type text/html, got %s", w.Header().Get("Content-Type"))
+	if w.Header().Get("Content-Type") != "application/json; charset=utf-8" {
+		t.Errorf("Expected Content-Type application/json, got %s", w.Header().Get("Content-Type"))
 	}
 }
 
@@ -213,6 +213,9 @@ func TestMetricsHandler_ListMetricsHandler_WithMetrics(t *testing.T) {
 	}
 	if !contains(body, "TestCounter") {
 		t.Error("Expected body to contain 'TestCounter'")
+	}
+	if !contains(body, "metrics") {
+		t.Error("Expected body to contain 'metrics'")
 	}
 }
 
