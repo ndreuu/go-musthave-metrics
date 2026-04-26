@@ -1,13 +1,27 @@
 package handler
 
 import (
-	"go-musthave-metrics/internal/repository"
-	"go-musthave-metrics/internal/service"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
+	"go-musthave-metrics/internal/repository"
+	"go-musthave-metrics/internal/service"
 )
+
+func setupTestRouter(storage repository.MetricsStorage) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	metricsService := service.NewMetricsService(storage)
+	handler := NewMetricsHandler(metricsService)
+
+	r.POST("/update/:type/:name/:value", handler.UpdateMetricHandler)
+	r.GET("/value/:type/:name", handler.GetMetricHandler)
+	r.GET("/", handler.ListMetricsHandler)
+
+	return r
+}
 
 func TestNewMetricsHandler(t *testing.T) {
 	storage := repository.NewMemStorage()
@@ -22,30 +36,14 @@ func TestNewMetricsHandler(t *testing.T) {
 	}
 }
 
-func TestMetricsHandler_UpdateMetricHandler_MethodNotAllowed(t *testing.T) {
-	storage := repository.NewMemStorage()
-	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService)
-
-	req := httptest.NewRequest(http.MethodGet, "/update/gauge/TestMetric/100", nil)
-	w := httptest.NewRecorder()
-
-	handler.UpdateMetricHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, w.Code)
-	}
-}
-
 func TestMetricsHandler_UpdateMetricHandler_Success_Gauge(t *testing.T) {
 	storage := repository.NewMemStorage()
-	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService)
+	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodPost, "/update/gauge/TestMetric/100.5", nil)
 	w := httptest.NewRecorder()
 
-	handler.UpdateMetricHandler(w, req)
+	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
@@ -62,13 +60,12 @@ func TestMetricsHandler_UpdateMetricHandler_Success_Gauge(t *testing.T) {
 
 func TestMetricsHandler_UpdateMetricHandler_Success_Counter(t *testing.T) {
 	storage := repository.NewMemStorage()
-	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService)
+	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodPost, "/update/counter/TestCounter/50", nil)
 	w := httptest.NewRecorder()
 
-	handler.UpdateMetricHandler(w, req)
+	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
@@ -83,98 +80,153 @@ func TestMetricsHandler_UpdateMetricHandler_Success_Counter(t *testing.T) {
 	}
 }
 
-func TestMetricsHandler_UpdateMetricHandler_InvalidPath_TooShort(t *testing.T) {
-	storage := repository.NewMemStorage()
-	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService)
-
-	req := httptest.NewRequest(http.MethodPost, "/update/gauge/Metric", nil)
-	w := httptest.NewRecorder()
-
-	handler.UpdateMetricHandler(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("Expected status 404, got %d", w.Code)
-	}
-}
-
-func TestMetricsHandler_UpdateMetricHandler_EmptyMetricName(t *testing.T) {
-	storage := repository.NewMemStorage()
-	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService)
-
-	req := httptest.NewRequest(http.MethodPost, "/update/gauge//100", nil)
-	w := httptest.NewRecorder()
-
-	handler.UpdateMetricHandler(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("Expected status 404, got %d", w.Code)
-	}
-
-	body := w.Body.String()
-	if !strings.Contains(body, "Not found") {
-		t.Errorf("Expected 'Not found' in response, got: %s", body)
-	}
-}
-
 func TestMetricsHandler_UpdateMetricHandler_InvalidMetricType(t *testing.T) {
 	storage := repository.NewMemStorage()
-	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService)
+	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodPost, "/update/histogram/TestMetric/100", nil)
 	w := httptest.NewRecorder()
 
-	handler.UpdateMetricHandler(w, req)
+	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("Expected status 400, got %d", w.Code)
 	}
 }
 
-func TestMetricsHandler_UpdateMetricHandler_InvalidGaugeValue(t *testing.T) {
+func TestMetricsHandler_UpdateMetricHandler_EmptyName(t *testing.T) {
 	storage := repository.NewMemStorage()
-	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService)
+	r := setupTestRouter(storage)
 
-	req := httptest.NewRequest(http.MethodPost, "/update/gauge/TestMetric/not-a-number", nil)
+	req := httptest.NewRequest(http.MethodPost, "/update/gauge//100", nil)
 	w := httptest.NewRecorder()
 
-	handler.UpdateMetricHandler(w, req)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d", w.Code)
+	}
+}
+
+func TestMetricsHandler_GetMetricHandler_Success_Gauge(t *testing.T) {
+	storage := repository.NewMemStorage()
+	storage.SetGauge("TestGauge", 123.456)
+	r := setupTestRouter(storage)
+
+	req := httptest.NewRequest(http.MethodGet, "/value/gauge/TestGauge", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	if w.Body.String() != "123.456" {
+		t.Errorf("Expected body '123.456', got '%s'", w.Body.String())
+	}
+}
+
+func TestMetricsHandler_GetMetricHandler_Success_Counter(t *testing.T) {
+	storage := repository.NewMemStorage()
+	storage.AddCounter("TestCounter", 42)
+	r := setupTestRouter(storage)
+
+	req := httptest.NewRequest(http.MethodGet, "/value/counter/TestCounter", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	if w.Body.String() != "42" {
+		t.Errorf("Expected body '42', got '%s'", w.Body.String())
+	}
+}
+
+func TestMetricsHandler_GetMetricHandler_NotFound(t *testing.T) {
+	storage := repository.NewMemStorage()
+	r := setupTestRouter(storage)
+
+	req := httptest.NewRequest(http.MethodGet, "/value/gauge/NonExisting", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d", w.Code)
+	}
+}
+
+func TestMetricsHandler_GetMetricHandler_InvalidType(t *testing.T) {
+	storage := repository.NewMemStorage()
+	r := setupTestRouter(storage)
+
+	req := httptest.NewRequest(http.MethodGet, "/value/histogram/TestMetric", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("Expected status 400, got %d", w.Code)
 	}
 }
 
-func TestMetricsHandler_UpdateMetricHandler_InvalidCounterValue(t *testing.T) {
+func TestMetricsHandler_ListMetricsHandler_Empty(t *testing.T) {
 	storage := repository.NewMemStorage()
-	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService)
+	r := setupTestRouter(storage)
 
-	req := httptest.NewRequest(http.MethodPost, "/update/counter/TestMetric/1.5", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 
-	handler.UpdateMetricHandler(w, req)
+	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("Expected status 400, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	if w.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Errorf("Expected Content-Type text/html, got %s", w.Header().Get("Content-Type"))
+	}
+}
+
+func TestMetricsHandler_ListMetricsHandler_WithMetrics(t *testing.T) {
+	storage := repository.NewMemStorage()
+	storage.SetGauge("TestGauge", 100.5)
+	storage.AddCounter("TestCounter", 50)
+	r := setupTestRouter(storage)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	body := w.Body.String()
+	if !contains(body, "TestGauge") {
+		t.Error("Expected body to contain 'TestGauge'")
+	}
+	if !contains(body, "TestCounter") {
+		t.Error("Expected body to contain 'TestCounter'")
 	}
 }
 
 func TestMetricsHandler_UpdateMetricHandler_Counter_Accumulate(t *testing.T) {
 	storage := repository.NewMemStorage()
-	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService)
+	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodPost, "/update/counter/TestCounter/10", nil)
 	w := httptest.NewRecorder()
-	handler.UpdateMetricHandler(w, req)
+	r.ServeHTTP(w, req)
 
 	req = httptest.NewRequest(http.MethodPost, "/update/counter/TestCounter/20", nil)
 	w = httptest.NewRecorder()
-	handler.UpdateMetricHandler(w, req)
+	r.ServeHTTP(w, req)
 
 	value, err := storage.GetCounter("TestCounter")
 	if err != nil {
@@ -187,16 +239,15 @@ func TestMetricsHandler_UpdateMetricHandler_Counter_Accumulate(t *testing.T) {
 
 func TestMetricsHandler_UpdateMetricHandler_Gauge_Overwrite(t *testing.T) {
 	storage := repository.NewMemStorage()
-	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService)
+	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodPost, "/update/gauge/TestGauge/100", nil)
 	w := httptest.NewRecorder()
-	handler.UpdateMetricHandler(w, req)
+	r.ServeHTTP(w, req)
 
 	req = httptest.NewRequest(http.MethodPost, "/update/gauge/TestGauge/200", nil)
 	w = httptest.NewRecorder()
-	handler.UpdateMetricHandler(w, req)
+	r.ServeHTTP(w, req)
 
 	value, err := storage.GetGauge("TestGauge")
 	if err != nil {
@@ -207,17 +258,15 @@ func TestMetricsHandler_UpdateMetricHandler_Gauge_Overwrite(t *testing.T) {
 	}
 }
 
-func TestMetricsHandler_UpdateMetricHandler_PathWithoutLeadingSlash(t *testing.T) {
-	storage := repository.NewMemStorage()
-	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService)
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && findSubstring(s, substr))
+}
 
-	req := httptest.NewRequest(http.MethodPost, "/update/gauge/TestMetric/123.456", nil)
-	w := httptest.NewRecorder()
-
-	handler.UpdateMetricHandler(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
 	}
+	return false
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"go-musthave-metrics/internal/repository"
+	models "go-musthave-metrics/internal/model"
 )
 
 type MetricsService struct {
@@ -83,4 +84,31 @@ func (s *MetricsService) UpdateMetric(result *UpdateMetricResult) error {
 		return s.storage.AddCounter(result.Name, value)
 	}
 	return fmt.Errorf("unknown metric type: %s", result.MType)
+}
+
+func (s *MetricsService) GetMetricValue(mType, name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("metric name cannot be empty")
+	}
+
+	switch mType {
+	case "gauge":
+		value, err := s.storage.GetGauge(name)
+		if err != nil {
+			return "", err
+		}
+		return strconv.FormatFloat(value, 'f', -1, 64), nil
+	case "counter":
+		value, err := s.storage.GetCounter(name)
+		if err != nil {
+			return "", err
+		}
+		return strconv.FormatInt(value, 10), nil
+	default:
+		return "", fmt.Errorf("invalid metric type: must be 'gauge' or 'counter'")
+	}
+}
+
+func (s *MetricsService) GetAllMetrics() []models.Metrics {
+	return s.storage.GetAll()
 }
