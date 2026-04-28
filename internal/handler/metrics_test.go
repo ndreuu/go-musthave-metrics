@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -10,7 +11,7 @@ import (
 	"go-musthave-metrics/internal/service"
 )
 
-func setupTestRouter(storage repository.MetricsStorage) *gin.Engine {
+func setupTestRouter(storage *repository.MemStorage) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	metricsService := service.NewMetricsService(storage)
@@ -208,13 +209,13 @@ func TestMetricsHandler_ListMetricsHandler_WithMetrics(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	if !contains(body, "TestGauge") {
+	if !strings.Contains(body, "TestGauge") {
 		t.Error("Expected body to contain 'TestGauge'")
 	}
-	if !contains(body, "TestCounter") {
+	if !strings.Contains(body, "TestCounter") {
 		t.Error("Expected body to contain 'TestCounter'")
 	}
-	if !contains(body, "metrics") {
+	if !strings.Contains(body, "metrics") {
 		t.Error("Expected body to contain 'metrics'")
 	}
 }
@@ -259,17 +260,4 @@ func TestMetricsHandler_UpdateMetricHandler_Gauge_Overwrite(t *testing.T) {
 	if value != 200 {
 		t.Errorf("Expected gauge value 200, got %f", value)
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && findSubstring(s, substr))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

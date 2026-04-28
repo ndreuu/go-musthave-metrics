@@ -5,15 +5,22 @@ import (
 	"strconv"
 	"strings"
 
-	"go-musthave-metrics/internal/repository"
 	models "go-musthave-metrics/internal/model"
 )
 
-type MetricsService struct {
-	storage repository.MetricsStorage
+type MetricsStorage interface {
+	SetGauge(name string, value float64) error
+	AddCounter(name string, value int64) error
+	GetGauge(name string) (float64, error)
+	GetCounter(name string) (int64, error)
+	GetAll() []models.Metrics
 }
 
-func NewMetricsService(storage repository.MetricsStorage) *MetricsService {
+type MetricsService struct {
+	storage MetricsStorage
+}
+
+func NewMetricsService(storage MetricsStorage) *MetricsService {
 	return &MetricsService{
 		storage: storage,
 	}

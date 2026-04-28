@@ -7,14 +7,6 @@ import (
 	models "go-musthave-metrics/internal/model"
 )
 
-type MetricsStorage interface {
-	SetGauge(name string, value float64) error
-	AddCounter(name string, value int64) error
-	GetGauge(name string) (float64, error)
-	GetCounter(name string) (int64, error)
-	GetAll() []models.Metrics
-}
-
 type MemStorage struct {
 	mu       sync.RWMutex
 	gauges   map[string]float64

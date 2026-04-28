@@ -58,8 +58,12 @@ func (s *Sender) SendAll(metrics []*Metric) []error {
 	return errors
 }
 
-func (s *Sender) SendMetricByName(collector *Collector, name string) error {
-	metric := collector.GetMetric(name)
+type MetricGetter interface {
+	GetMetric(name string) *Metric
+}
+
+func (s *Sender) SendMetricByName(getter MetricGetter, name string) error {
+	metric := getter.GetMetric(name)
 	if metric == nil {
 		return fmt.Errorf("metric %s not found", name)
 	}

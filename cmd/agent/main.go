@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"log"
-	"time"
-
 	"go-musthave-metrics/internal/agent"
+	"log"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
 )
 
 func main() {
@@ -19,9 +23,17 @@ func main() {
 	fmt.Printf("  Report Interval: %v\n", cfg.ReportInterval)
 	fmt.Printf("  Server Address: %s\n", cfg.ServerAddress)
 
-	done := make(chan bool)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		ticker := time.NewTicker(cfg.PollInterval)
 		defer ticker.Stop()
 
@@ -30,14 +42,16 @@ func main() {
 			case <-ticker.C:
 				collector.Collect()
 				fmt.Printf("[%s] Metrics collected\n", time.Now().Format(time.RFC3339))
-			case <-done:
+			case <-ctx.Done():
 				fmt.Println("Collector shutting down")
 				return
 			}
 		}
 	}()
 
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		ticker := time.NewTicker(cfg.ReportInterval)
 		defer ticker.Stop()
 
@@ -53,7 +67,7 @@ func main() {
 				} else {
 					fmt.Printf("[%s] Sent %d metrics to server\n", time.Now().Format(time.RFC3339), len(metrics))
 				}
-			case <-done:
+			case <-ctx.Done():
 				fmt.Println("Sender shutting down")
 				return
 			}
@@ -62,5 +76,10 @@ func main() {
 
 	fmt.Println("Agent is running. Press Ctrl+C to stop.")
 
-	select {}
+	<-sigChan
+	fmt.Println("\nShutting down agent...")
+	cancel()
+
+	wg.Wait()
+	fmt.Println("Agent stopped")
 }
