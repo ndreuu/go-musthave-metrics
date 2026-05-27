@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -223,5 +224,126 @@ func TestMemStorage_Concurrency(t *testing.T) {
 
 	for i := 0; i < 10; i++ {
 		<-done
+	}
+}
+
+func TestMemStorage_SaveToFile(t *testing.T) {
+	storage := NewMemStorage()
+
+	storage.SetGauge("TestGauge", 123.456)
+	storage.AddCounter("TestCounter", 42)
+
+	tmpFile := "test_metrics.json"
+	defer os.Remove(tmpFile)
+
+	err := storage.SaveToFile(tmpFile)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	data, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatalf("Expected no error reading file, got %v", err)
+	}
+
+	if len(data) == 0 {
+		t.Fatal("Expected non-empty file")
+	}
+
+	if !strings.Contains(string(data), "TestGauge") {
+		t.Error("Expected file to contain TestGauge")
+	}
+	if !strings.Contains(string(data), "TestCounter") {
+		t.Error("Expected file to contain TestCounter")
+	}
+}
+
+func TestMemStorage_LoadFromFile(t *testing.T) {
+	storage := NewMemStorage()
+
+	tmpFile := "test_metrics_load.json"
+	defer os.Remove(tmpFile)
+
+	testData := `[
+		{"id": "LoadedGauge", "type": "gauge", "value": 999.999},
+		{"id": "LoadedCounter", "type": "counter", "delta": 123}
+	]`
+
+	err := os.WriteFile(tmpFile, []byte(testData), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	err = storage.LoadFromFile(tmpFile)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	gaugeVal, err := storage.GetGauge("LoadedGauge")
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if gaugeVal != 999.999 {
+		t.Errorf("Expected gauge value 999.999, got %f", gaugeVal)
+	}
+
+	counterVal, err := storage.GetCounter("LoadedCounter")
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if counterVal != 123 {
+		t.Errorf("Expected counter value 123, got %d", counterVal)
+	}
+}
+
+func TestMemStorage_LoadFromFile_NotExist(t *testing.T) {
+	storage := NewMemStorage()
+
+	err := storage.LoadFromFile("non_existing_file.json")
+	if err != nil {
+		t.Fatalf("Expected no error for non-existing file, got %v", err)
+	}
+}
+
+func TestMemStorage_SaveAndLoad_RoundTrip(t *testing.T) {
+	storage := NewMemStorage()
+
+	storage.SetGauge("Gauge1", 1.5)
+	storage.SetGauge("Gauge2", 2.5)
+	storage.AddCounter("Counter1", 100)
+	storage.AddCounter("Counter2", 200)
+
+	tmpFile := "test_roundtrip.json"
+	defer os.Remove(tmpFile)
+
+	err := storage.SaveToFile(tmpFile)
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	newStorage := NewMemStorage()
+	err = newStorage.LoadFromFile(tmpFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	g1, _ := newStorage.GetGauge("Gauge1")
+	if g1 != 1.5 {
+		t.Errorf("Expected Gauge1=1.5, got %f", g1)
+	}
+
+	g2, _ := newStorage.GetGauge("Gauge2")
+	if g2 != 2.5 {
+		t.Errorf("Expected Gauge2=2.5, got %f", g2)
+	}
+
+	c1, _ := newStorage.GetCounter("Counter1")
+	if c1 != 100 {
+		t.Errorf("Expected Counter1=100, got %d", c1)
+	}
+
+	c2, _ := newStorage.GetCounter("Counter2")
+	if c2 != 200 {
+		t.Errorf("Expected Counter2=200, got %d", c2)
 	}
 }
