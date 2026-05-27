@@ -2,6 +2,8 @@ package agent
 
 import (
 	"flag"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -23,6 +25,20 @@ func NewConfig() *Config {
 	flag.IntVar(&reportInterval, "r", 10, "report interval in seconds")
 	flag.IntVar(&pollInterval, "p", 2, "poll interval in seconds")
 	flag.Parse()
+
+	if envAddr := os.Getenv("ADDRESS"); envAddr != "" {
+		serverAddress = envAddr
+	}
+	if envReportInterval := os.Getenv("REPORT_INTERVAL"); envReportInterval != "" {
+		if interval, err := strconv.Atoi(envReportInterval); err == nil {
+			reportInterval = interval
+		}
+	}
+	if envPollInterval := os.Getenv("POLL_INTERVAL"); envPollInterval != "" {
+		if interval, err := strconv.Atoi(envPollInterval); err == nil {
+			pollInterval = interval
+		}
+	}
 
 	if serverAddress != "" && !strings.HasPrefix(serverAddress, "http://") && !strings.HasPrefix(serverAddress, "https://") {
 		serverAddress = "http://" + serverAddress
