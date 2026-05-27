@@ -1,10 +1,11 @@
 package handler
 
 import (
-	"go-musthave-metrics/internal/service"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	models "go-musthave-metrics/internal/model"
+	"go-musthave-metrics/internal/service"
 )
 
 type MetricsHandler struct {
@@ -72,4 +73,35 @@ func (h *MetricsHandler) GetMetricHandler(c *gin.Context) {
 func (h *MetricsHandler) ListMetricsHandler(c *gin.Context) {
 	metrics := h.service.GetAllMetrics()
 	c.JSON(http.StatusOK, gin.H{"metrics": metrics})
+}
+
+func (h *MetricsHandler) UpdateMetricJSONHandler(c *gin.Context) {
+	var m models.Metrics
+	if err := c.ShouldBindJSON(&m); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON"})
+		return
+	}
+
+	if err := h.service.UpdateMetricFromJSON(&m); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "OK"})
+}
+
+func (h *MetricsHandler) GetMetricJSONHandler(c *gin.Context) {
+	var m models.Metrics
+	if err := c.ShouldBindJSON(&m); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON"})
+		return
+	}
+
+	result, err := h.service.GetMetricFromJSON(&m)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
 }

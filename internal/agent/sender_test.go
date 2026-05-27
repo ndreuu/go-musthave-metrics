@@ -52,12 +52,12 @@ func TestSender_Send_Gauge(t *testing.T) {
 		t.Errorf("Expected POST method, got %s", receivedMethod)
 	}
 
-	if receivedContentType != "text/plain" {
-		t.Errorf("Expected Content-Type to be text/plain, got %s", receivedContentType)
+	if receivedContentType != "application/json" {
+		t.Errorf("Expected Content-Type to be application/json, got %s", receivedContentType)
 	}
 
-	if !strings.Contains(receivedURL, "/update/gauge/TestMetric/") {
-		t.Errorf("Expected URL to contain /update/gauge/TestMetric/, got %s", receivedURL)
+	if receivedURL != "/update" {
+		t.Errorf("Expected URL to be /update, got %s", receivedURL)
 	}
 }
 
@@ -89,13 +89,18 @@ func TestSender_Send_Counter(t *testing.T) {
 		t.Errorf("Expected POST method, got %s", receivedMethod)
 	}
 
-	if !strings.Contains(receivedURL, "/update/counter/TestCounter/") {
-		t.Errorf("Expected URL to contain /update/counter/TestCounter/, got %s", receivedURL)
+	if receivedURL != "/update" {
+		t.Errorf("Expected URL to be /update, got %s", receivedURL)
 	}
 }
 
 func TestSender_Send_UnknownType(t *testing.T) {
-	sender := NewSender("http://localhost:8080")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	sender := NewSender(server.URL)
 
 	metric := &Metric{
 		MType: "unknown",
@@ -107,8 +112,8 @@ func TestSender_Send_UnknownType(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for unknown metric type")
 	}
-	if !strings.Contains(err.Error(), "unknown metric type") {
-		t.Errorf("Expected error about unknown metric type, got %v", err)
+	if !strings.Contains(err.Error(), "server returned status 400") {
+		t.Errorf("Expected error about server status 400, got %v", err)
 	}
 }
 
@@ -199,8 +204,8 @@ func TestSender_SendMetricByName(t *testing.T) {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
-	if !strings.Contains(receivedURL, "/update/gauge/Alloc/") {
-		t.Errorf("Expected URL to contain /update/gauge/Alloc/, got %s", receivedURL)
+	if receivedURL != "/update" {
+		t.Errorf("Expected URL to be /update, got %s", receivedURL)
 	}
 }
 

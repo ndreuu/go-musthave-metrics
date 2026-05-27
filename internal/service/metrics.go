@@ -119,3 +119,60 @@ func (s *MetricsService) GetMetricValue(mType, name string) (string, error) {
 func (s *MetricsService) GetAllMetrics() []models.Metrics {
 	return s.storage.GetAll()
 }
+
+func (s *MetricsService) UpdateMetricFromJSON(m *models.Metrics) error {
+	if m.ID == "" {
+		return fmt.Errorf("metric ID cannot be empty")
+	}
+	if m.MType == "" {
+		return fmt.Errorf("metric type cannot be empty")
+	}
+
+	switch m.MType {
+	case models.Gauge:
+		if m.Value == nil {
+			return fmt.Errorf("gauge metric must have value")
+		}
+		return s.storage.SetGauge(m.ID, *m.Value)
+	case models.Counter:
+		if m.Delta == nil {
+			return fmt.Errorf("counter metric must have delta")
+		}
+		return s.storage.AddCounter(m.ID, *m.Delta)
+	default:
+		return fmt.Errorf("invalid metric type: must be 'gauge' or 'counter'")
+	}
+}
+
+func (s *MetricsService) GetMetricFromJSON(m *models.Metrics) (*models.Metrics, error) {
+	if m.ID == "" {
+		return nil, fmt.Errorf("metric ID cannot be empty")
+	}
+	if m.MType == "" {
+		return nil, fmt.Errorf("metric type cannot be empty")
+	}
+
+	result := &models.Metrics{
+		ID:    m.ID,
+		MType: m.MType,
+	}
+
+	switch m.MType {
+	case models.Gauge:
+		value, err := s.storage.GetGauge(m.ID)
+		if err != nil {
+			return nil, err
+		}
+		result.Value = &value
+	case models.Counter:
+		value, err := s.storage.GetCounter(m.ID)
+		if err != nil {
+			return nil, err
+		}
+		result.Delta = &value
+	default:
+		return nil, fmt.Errorf("invalid metric type: must be 'gauge' or 'counter'")
+	}
+
+	return result, nil
+}

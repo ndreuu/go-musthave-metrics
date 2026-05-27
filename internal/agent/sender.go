@@ -1,9 +1,13 @@
 package agent
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
+
+	models "go-musthave-metrics/internal/model"
 )
 
 type Sender struct {
@@ -19,21 +23,29 @@ func NewSender(serverAddress string) *Sender {
 }
 
 func (s *Sender) Send(metric *Metric) error {
-	var url string
-	switch metric.MType {
-	case "gauge":
-		url = fmt.Sprintf("%s/update/gauge/%s/%f", s.serverAddress, metric.Name, metric.Value)
-	case "counter":
-		url = fmt.Sprintf("%s/update/counter/%s/%d", s.serverAddress, metric.Name, int64(metric.Value))
-	default:
-		return fmt.Errorf("unknown metric type: %s", metric.MType)
+	m := models.Metrics{
+		ID:    metric.Name,
+		MType: metric.MType,
 	}
 
-	req, err := http.NewRequest(http.MethodPost, url, nil)
+	switch metric.MType {
+	case "gauge":
+		m.Value = &metric.Value
+	case "counter":
+		delta := int64(metric.Value)
+		m.Delta = &delta
+	}
+
+	jsonData, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, s.serverAddress+"/update", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.client.Do(req)
 	if err != nil {

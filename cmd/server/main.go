@@ -52,6 +52,9 @@ func main() {
 	r.POST("/update/:type/:name/:value", metricsHandler.UpdateMetricHandler)
 	r.GET("/value/:type/:name", metricsHandler.GetMetricHandler)
 	r.GET("/", metricsHandler.ListMetricsHandler)
+	
+	r.POST("/update", metricsHandler.UpdateMetricJSONHandler)
+	r.POST("/value", metricsHandler.GetMetricJSONHandler)
 
 	logger.Log.Info("Server starting", zap.String("address", flagRunAddr))
 
