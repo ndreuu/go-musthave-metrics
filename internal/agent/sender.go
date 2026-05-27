@@ -1,11 +1,13 @@
 package agent
 
 import (
-	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	models "go-musthave-metrics/internal/model"
 )
@@ -41,11 +43,26 @@ func (s *Sender) Send(metric *Metric) error {
 		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, s.serverAddress+"/update", bytes.NewBuffer(jsonData))
+	var bodyReader io.Reader
+	var contentEncoding string
+
+	buf := &strings.Builder{}
+	gzWriter := gzip.NewWriter(buf)
+	if _, err := gzWriter.Write(jsonData); err != nil {
+		return fmt.Errorf("failed to compress data: %w", err)
+	}
+	if err := gzWriter.Close(); err != nil {
+		return fmt.Errorf("failed to close gzip writer: %w", err)
+	}
+	bodyReader = strings.NewReader(buf.String())
+	contentEncoding = "gzip"
+
+	req, err := http.NewRequest(http.MethodPost, s.serverAddress+"/update", bodyReader)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", contentEncoding)
 
 	resp, err := s.client.Do(req)
 	if err != nil {

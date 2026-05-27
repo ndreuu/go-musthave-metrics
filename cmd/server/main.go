@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go-musthave-metrics/internal/handler"
 	"go-musthave-metrics/internal/logger"
+	"go-musthave-metrics/internal/middleware"
 	"go-musthave-metrics/internal/repository"
 	"go-musthave-metrics/internal/service"
 	"go.uber.org/zap"
@@ -48,6 +49,8 @@ func main() {
 
 	r.Use(gin.Recovery())
 	r.Use(logger.RequestLogger())
+	r.Use(middleware.GzipUnmarshal())
+	r.Use(middleware.Gzip())
 
 	r.POST("/update/:type/:name/:value", metricsHandler.UpdateMetricHandler)
 	r.GET("/value/:type/:name", metricsHandler.GetMetricHandler)

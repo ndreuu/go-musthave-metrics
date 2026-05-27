@@ -72,7 +72,16 @@ func (h *MetricsHandler) GetMetricHandler(c *gin.Context) {
 
 func (h *MetricsHandler) ListMetricsHandler(c *gin.Context) {
 	metrics := h.service.GetAllMetrics()
-	c.JSON(http.StatusOK, gin.H{"metrics": metrics})
+
+	c.Header("Content-Type", "text/html; charset=utf-8")
+
+	html := "<html><body><table>"
+	for _, m := range metrics {
+		html += "<tr><td>" + m.ID + "</td><td>" + m.MType + "</td></tr>"
+	}
+	html += "</table></body></html>"
+
+	c.String(http.StatusOK, html)
 }
 
 func (h *MetricsHandler) UpdateMetricJSONHandler(c *gin.Context) {

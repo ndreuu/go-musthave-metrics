@@ -1,10 +1,15 @@
 package agent
 
 import (
+	"compress/gzip"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNewSender(t *testing.T) {
@@ -92,6 +97,46 @@ func TestSender_Send_Counter(t *testing.T) {
 	if receivedURL != "/update" {
 		t.Errorf("Expected URL to be /update, got %s", receivedURL)
 	}
+}
+
+func TestSender_Send_GzipCompression(t *testing.T) {
+	var receivedContentEncoding string
+	var receivedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedContentEncoding = r.Header.Get("Content-Encoding")
+
+		var err error
+		if r.Header.Get("Content-Encoding") == "gzip" {
+			gzReader, _ := gzip.NewReader(r.Body)
+			defer gzReader.Close()
+			receivedBody, err = io.ReadAll(gzReader)
+		} else {
+			receivedBody, err = io.ReadAll(r.Body)
+		}
+		assert.NoError(t, err)
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	sender := NewSender(server.URL)
+
+	metric := &Metric{
+		MType: "gauge",
+		Name:  "TestGzipMetric",
+		Value: 999.999,
+	}
+
+	err := sender.Send(metric)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "gzip", receivedContentEncoding)
+
+	var receivedMetric map[string]interface{}
+	assert.NoError(t, json.Unmarshal(receivedBody, &receivedMetric))
+	assert.Equal(t, "TestGzipMetric", receivedMetric["id"])
+	assert.Equal(t, "gauge", receivedMetric["type"])
 }
 
 func TestSender_Send_UnknownType(t *testing.T) {
