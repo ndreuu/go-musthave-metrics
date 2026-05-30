@@ -13,13 +13,21 @@ type MemStorage struct {
 	mu       sync.RWMutex
 	gauges   map[string]float64
 	counters map[string]int64
+	filePath string
 }
 
-func NewMemStorage() *MemStorage {
-	return &MemStorage{
+func NewMemStorage(filePath string) *MemStorage {
+	m := &MemStorage{
 		gauges:   make(map[string]float64),
 		counters: make(map[string]int64),
+		filePath: filePath,
 	}
+	if filePath != "" {
+		if err := m.loadFromFileLocked(filePath); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to load metrics from file: %v\n", err)
+		}
+	}
+	return m
 }
 
 func (m *MemStorage) SetGauge(name string, value float64) error {
@@ -29,7 +37,7 @@ func (m *MemStorage) SetGauge(name string, value float64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.gauges[name] = value
-	return nil
+	return m.saveToFileLocked()
 }
 
 func (m *MemStorage) AddCounter(name string, value int64) error {
@@ -39,7 +47,7 @@ func (m *MemStorage) AddCounter(name string, value int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.counters[name] += value
-	return nil
+	return m.saveToFileLocked()
 }
 
 func (m *MemStorage) GetGauge(name string) (float64, error) {
@@ -90,10 +98,24 @@ func (m *MemStorage) GetAll() []models.Metrics {
 	return metrics
 }
 
-func (m *MemStorage) SaveToFile(filePath string) error {
+func (m *MemStorage) saveToFileLocked() error {
+	if m.filePath == "" {
+		return nil
+	}
+	return m.saveToFileUnlocked()
+}
+
+func (m *MemStorage) saveToFileUnlocked() error {
+	return m.saveToFileUnlockedInternal(m.filePath)
+}
+
+func (m *MemStorage) SaveToFile() error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	return m.saveToFileUnlockedInternal(m.filePath)
+}
 
+func (m *MemStorage) saveToFileUnlockedInternal(filePath string) error {
 	metrics := make([]models.Metrics, 0, len(m.gauges)+len(m.counters))
 	for name, value := range m.gauges {
 		metrics = append(metrics, models.Metrics{
@@ -116,14 +138,20 @@ func (m *MemStorage) SaveToFile(filePath string) error {
 		return fmt.Errorf("failed to marshal metrics: %w", err)
 	}
 
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write file: %w", err)
+	tmpFile := filePath + ".tmp"
+	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+
+	if err := os.Rename(tmpFile, filePath); err != nil {
+		os.Remove(tmpFile)
+		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
 	return nil
 }
 
-func (m *MemStorage) LoadFromFile(filePath string) error {
+func (m *MemStorage) loadFromFileLocked(filePath string) error {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -136,9 +164,6 @@ func (m *MemStorage) LoadFromFile(filePath string) error {
 	if err := json.Unmarshal(data, &metrics); err != nil {
 		return fmt.Errorf("failed to unmarshal metrics: %w", err)
 	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	for _, metric := range metrics {
 		switch metric.MType {

@@ -15,7 +15,7 @@ func setupTestRouter(storage *repository.MemStorage) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService)
+	handler := NewMetricsHandler(metricsService, storage, "")
 
 	r.POST("/update/:type/:name/:value", handler.UpdateMetricHandler)
 	r.GET("/value/:type/:name", handler.GetMetricHandler)
@@ -25,9 +25,9 @@ func setupTestRouter(storage *repository.MemStorage) *gin.Engine {
 }
 
 func TestNewMetricsHandler(t *testing.T) {
-	storage := repository.NewMemStorage()
+	storage := repository.NewMemStorage("")
 	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService)
+	handler := NewMetricsHandler(metricsService, storage, "")
 
 	if handler == nil {
 		t.Fatal("Expected handler to be non-nil")
@@ -38,7 +38,7 @@ func TestNewMetricsHandler(t *testing.T) {
 }
 
 func TestMetricsHandler_UpdateMetricHandler_Success_Gauge(t *testing.T) {
-	storage := repository.NewMemStorage()
+	storage := repository.NewMemStorage("")
 	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodPost, "/update/gauge/TestMetric/100.5", nil)
@@ -60,7 +60,7 @@ func TestMetricsHandler_UpdateMetricHandler_Success_Gauge(t *testing.T) {
 }
 
 func TestMetricsHandler_UpdateMetricHandler_Success_Counter(t *testing.T) {
-	storage := repository.NewMemStorage()
+	storage := repository.NewMemStorage("")
 	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodPost, "/update/counter/TestCounter/50", nil)
@@ -82,7 +82,7 @@ func TestMetricsHandler_UpdateMetricHandler_Success_Counter(t *testing.T) {
 }
 
 func TestMetricsHandler_UpdateMetricHandler_InvalidMetricType(t *testing.T) {
-	storage := repository.NewMemStorage()
+	storage := repository.NewMemStorage("")
 	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodPost, "/update/histogram/TestMetric/100", nil)
@@ -96,7 +96,7 @@ func TestMetricsHandler_UpdateMetricHandler_InvalidMetricType(t *testing.T) {
 }
 
 func TestMetricsHandler_UpdateMetricHandler_EmptyName(t *testing.T) {
-	storage := repository.NewMemStorage()
+	storage := repository.NewMemStorage("")
 	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodPost, "/update/gauge//100", nil)
@@ -110,7 +110,7 @@ func TestMetricsHandler_UpdateMetricHandler_EmptyName(t *testing.T) {
 }
 
 func TestMetricsHandler_GetMetricHandler_Success_Gauge(t *testing.T) {
-	storage := repository.NewMemStorage()
+	storage := repository.NewMemStorage("")
 	storage.SetGauge("TestGauge", 123.456)
 	r := setupTestRouter(storage)
 
@@ -129,7 +129,7 @@ func TestMetricsHandler_GetMetricHandler_Success_Gauge(t *testing.T) {
 }
 
 func TestMetricsHandler_GetMetricHandler_Success_Counter(t *testing.T) {
-	storage := repository.NewMemStorage()
+	storage := repository.NewMemStorage("")
 	storage.AddCounter("TestCounter", 42)
 	r := setupTestRouter(storage)
 
@@ -148,7 +148,7 @@ func TestMetricsHandler_GetMetricHandler_Success_Counter(t *testing.T) {
 }
 
 func TestMetricsHandler_GetMetricHandler_NotFound(t *testing.T) {
-	storage := repository.NewMemStorage()
+	storage := repository.NewMemStorage("")
 	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/value/gauge/NonExisting", nil)
@@ -162,7 +162,7 @@ func TestMetricsHandler_GetMetricHandler_NotFound(t *testing.T) {
 }
 
 func TestMetricsHandler_GetMetricHandler_InvalidType(t *testing.T) {
-	storage := repository.NewMemStorage()
+	storage := repository.NewMemStorage("")
 	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/value/histogram/TestMetric", nil)
@@ -176,7 +176,7 @@ func TestMetricsHandler_GetMetricHandler_InvalidType(t *testing.T) {
 }
 
 func TestMetricsHandler_ListMetricsHandler_Empty(t *testing.T) {
-	storage := repository.NewMemStorage()
+	storage := repository.NewMemStorage("")
 	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -194,7 +194,7 @@ func TestMetricsHandler_ListMetricsHandler_Empty(t *testing.T) {
 }
 
 func TestMetricsHandler_ListMetricsHandler_WithMetrics(t *testing.T) {
-	storage := repository.NewMemStorage()
+	storage := repository.NewMemStorage("")
 	storage.SetGauge("TestGauge", 100.5)
 	storage.AddCounter("TestCounter", 50)
 	r := setupTestRouter(storage)
@@ -218,7 +218,7 @@ func TestMetricsHandler_ListMetricsHandler_WithMetrics(t *testing.T) {
 }
 
 func TestMetricsHandler_UpdateMetricHandler_Counter_Accumulate(t *testing.T) {
-	storage := repository.NewMemStorage()
+	storage := repository.NewMemStorage("")
 	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodPost, "/update/counter/TestCounter/10", nil)
@@ -239,7 +239,7 @@ func TestMetricsHandler_UpdateMetricHandler_Counter_Accumulate(t *testing.T) {
 }
 
 func TestMetricsHandler_UpdateMetricHandler_Gauge_Overwrite(t *testing.T) {
-	storage := repository.NewMemStorage()
+	storage := repository.NewMemStorage("")
 	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodPost, "/update/gauge/TestGauge/100", nil)

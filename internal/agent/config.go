@@ -26,15 +26,15 @@ func NewConfig() *Config {
 	flag.IntVar(&pollInterval, "p", 2, "poll interval in seconds")
 	flag.Parse()
 
-	if envAddr := os.Getenv("ADDRESS"); envAddr != "" {
+	if envAddr, ok := os.LookupEnv("ADDRESS"); ok && envAddr != "" {
 		serverAddress = envAddr
 	}
-	if envReportInterval := os.Getenv("REPORT_INTERVAL"); envReportInterval != "" {
+	if envReportInterval, ok := os.LookupEnv("REPORT_INTERVAL"); ok && envReportInterval != "" {
 		if interval, err := strconv.Atoi(envReportInterval); err == nil {
 			reportInterval = interval
 		}
 	}
-	if envPollInterval := os.Getenv("POLL_INTERVAL"); envPollInterval != "" {
+	if envPollInterval, ok := os.LookupEnv("POLL_INTERVAL"); ok && envPollInterval != "" {
 		if interval, err := strconv.Atoi(envPollInterval); err == nil {
 			pollInterval = interval
 		}

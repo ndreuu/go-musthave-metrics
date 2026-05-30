@@ -17,14 +17,18 @@ import (
 func TestGzip_ResponseCompression(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	router := gin.New()
+	router.Use(Gzip())
+	router.GET("/test", func(c *gin.Context) {
+		c.Header("Content-Type", "application/json")
+		c.String(http.StatusOK, "test")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
 
-	c.Request = httptest.NewRequest(http.MethodGet, "/test", nil)
-	c.Request.Header.Set("Accept-Encoding", "gzip")
-
-	handler := Gzip()
-	handler(c)
+	router.ServeHTTP(w, req)
 
 	assert.Equal(t, "gzip", w.Header().Get("Content-Encoding"))
 	assert.Equal(t, "Accept-Encoding", w.Header().Get("Vary"))

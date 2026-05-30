@@ -1,13 +1,13 @@
 package agent
 
 import (
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 
 	models "go-musthave-metrics/internal/model"
 )
@@ -46,7 +46,7 @@ func (s *Sender) Send(metric *Metric) error {
 	var bodyReader io.Reader
 	var contentEncoding string
 
-	buf := &strings.Builder{}
+	buf := &bytes.Buffer{}
 	gzWriter := gzip.NewWriter(buf)
 	if _, err := gzWriter.Write(jsonData); err != nil {
 		return fmt.Errorf("failed to compress data: %w", err)
@@ -54,7 +54,7 @@ func (s *Sender) Send(metric *Metric) error {
 	if err := gzWriter.Close(); err != nil {
 		return fmt.Errorf("failed to close gzip writer: %w", err)
 	}
-	bodyReader = strings.NewReader(buf.String())
+	bodyReader = buf
 	contentEncoding = "gzip"
 
 	req, err := http.NewRequest(http.MethodPost, s.serverAddress+"/update", bodyReader)

@@ -21,14 +21,10 @@ func Gzip() gin.HandlerFunc {
 		gzWriter := gzip.NewWriter(c.Writer)
 		defer gzWriter.Close()
 
-		gzResponseWriter := &gzipResponseWriter{
+		c.Writer = &gzipResponseWriter{
 			ResponseWriter: c.Writer,
 			Writer:         gzWriter,
 		}
-
-		c.Header("Content-Encoding", "gzip")
-		c.Header("Vary", "Accept-Encoding")
-		c.Writer = gzResponseWriter
 
 		c.Next()
 	}
@@ -36,16 +32,44 @@ func Gzip() gin.HandlerFunc {
 
 type gzipResponseWriter struct {
 	gin.ResponseWriter
-	Writer *gzip.Writer
+	Writer     *gzip.Writer
+	compressing bool
+	checked    bool
+	statusCode int
+}
+
+func (w *gzipResponseWriter) shouldCompress() bool {
+	contentType := w.Header().Get("Content-Type")
+
+	return strings.HasPrefix(contentType, "application/json") ||
+		strings.HasPrefix(contentType, "text/html")
 }
 
 func (w *gzipResponseWriter) Write(b []byte) (int, error) {
+	if !w.checked {
+		w.checked = true
+		w.compressing = w.shouldCompress()
+
+		if w.compressing {
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Set("Vary", "Accept-Encoding")
+			w.Header().Del("Content-Length")
+		}
+
+		if w.statusCode != 0 {
+			w.ResponseWriter.WriteHeader(w.statusCode)
+		}
+	}
+
+	if !w.compressing {
+		return w.ResponseWriter.Write(b)
+	}
+
 	return w.Writer.Write(b)
 }
 
 func (w *gzipResponseWriter) WriteHeader(statusCode int) {
-	w.ResponseWriter.Header().Del("Content-Length")
-	w.ResponseWriter.WriteHeader(statusCode)
+	w.statusCode = statusCode
 }
 
 func GzipUnmarshal() gin.HandlerFunc {

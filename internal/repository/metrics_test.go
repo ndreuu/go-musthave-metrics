@@ -7,7 +7,7 @@ import (
 )
 
 func TestNewMemStorage(t *testing.T) {
-	storage := NewMemStorage()
+	storage := NewMemStorage("")
 
 	if storage == nil {
 		t.Fatal("Expected storage to be non-nil")
@@ -21,7 +21,7 @@ func TestNewMemStorage(t *testing.T) {
 }
 
 func TestMemStorage_SetGauge(t *testing.T) {
-	storage := NewMemStorage()
+	storage := NewMemStorage("")
 
 	err := storage.SetGauge("TestGauge", 123.456)
 	if err != nil {
@@ -38,7 +38,7 @@ func TestMemStorage_SetGauge(t *testing.T) {
 }
 
 func TestMemStorage_SetGauge_EmptyName(t *testing.T) {
-	storage := NewMemStorage()
+	storage := NewMemStorage("")
 
 	err := storage.SetGauge("", 123.456)
 	if err == nil {
@@ -50,7 +50,7 @@ func TestMemStorage_SetGauge_EmptyName(t *testing.T) {
 }
 
 func TestMemStorage_SetGauge_Overwrite(t *testing.T) {
-	storage := NewMemStorage()
+	storage := NewMemStorage("")
 
 	err := storage.SetGauge("TestGauge", 100.0)
 	if err != nil {
@@ -72,7 +72,7 @@ func TestMemStorage_SetGauge_Overwrite(t *testing.T) {
 }
 
 func TestMemStorage_AddCounter(t *testing.T) {
-	storage := NewMemStorage()
+	storage := NewMemStorage("")
 
 	err := storage.AddCounter("TestCounter", 10)
 	if err != nil {
@@ -89,7 +89,7 @@ func TestMemStorage_AddCounter(t *testing.T) {
 }
 
 func TestMemStorage_AddCounter_EmptyName(t *testing.T) {
-	storage := NewMemStorage()
+	storage := NewMemStorage("")
 
 	err := storage.AddCounter("", 10)
 	if err == nil {
@@ -101,7 +101,7 @@ func TestMemStorage_AddCounter_EmptyName(t *testing.T) {
 }
 
 func TestMemStorage_AddCounter_Accumulate(t *testing.T) {
-	storage := NewMemStorage()
+	storage := NewMemStorage("")
 
 	err := storage.AddCounter("TestCounter", 10)
 	if err != nil {
@@ -128,7 +128,7 @@ func TestMemStorage_AddCounter_Accumulate(t *testing.T) {
 }
 
 func TestMemStorage_GetGauge_NotFound(t *testing.T) {
-	storage := NewMemStorage()
+	storage := NewMemStorage("")
 
 	_, err := storage.GetGauge("NonExisting")
 	if err == nil {
@@ -137,7 +137,7 @@ func TestMemStorage_GetGauge_NotFound(t *testing.T) {
 }
 
 func TestMemStorage_GetGauge_EmptyName(t *testing.T) {
-	storage := NewMemStorage()
+	storage := NewMemStorage("")
 
 	_, err := storage.GetGauge("")
 	if err == nil {
@@ -149,7 +149,7 @@ func TestMemStorage_GetGauge_EmptyName(t *testing.T) {
 }
 
 func TestMemStorage_GetCounter_NotFound(t *testing.T) {
-	storage := NewMemStorage()
+	storage := NewMemStorage("")
 
 	_, err := storage.GetCounter("NonExisting")
 	if err == nil {
@@ -158,7 +158,7 @@ func TestMemStorage_GetCounter_NotFound(t *testing.T) {
 }
 
 func TestMemStorage_GetCounter_EmptyName(t *testing.T) {
-	storage := NewMemStorage()
+	storage := NewMemStorage("")
 
 	_, err := storage.GetCounter("")
 	if err == nil {
@@ -170,7 +170,7 @@ func TestMemStorage_GetCounter_EmptyName(t *testing.T) {
 }
 
 func TestMemStorage_GetAll(t *testing.T) {
-	storage := NewMemStorage()
+	storage := NewMemStorage("")
 
 	storage.SetGauge("Gauge1", 1.0)
 	storage.SetGauge("Gauge2", 2.0)
@@ -198,7 +198,7 @@ func TestMemStorage_GetAll(t *testing.T) {
 }
 
 func TestMemStorage_GetAll_Empty(t *testing.T) {
-	storage := NewMemStorage()
+	storage := NewMemStorage("")
 
 	metrics := storage.GetAll()
 	if len(metrics) != 0 {
@@ -207,7 +207,7 @@ func TestMemStorage_GetAll_Empty(t *testing.T) {
 }
 
 func TestMemStorage_Concurrency(t *testing.T) {
-	storage := NewMemStorage()
+	storage := NewMemStorage("")
 
 	done := make(chan bool)
 
@@ -228,20 +228,18 @@ func TestMemStorage_Concurrency(t *testing.T) {
 }
 
 func TestMemStorage_SaveToFile(t *testing.T) {
-	storage := NewMemStorage()
+	storage := NewMemStorage("test_metrics.json")
+	defer os.Remove("test_metrics.json")
 
 	storage.SetGauge("TestGauge", 123.456)
 	storage.AddCounter("TestCounter", 42)
 
-	tmpFile := "test_metrics.json"
-	defer os.Remove(tmpFile)
-
-	err := storage.SaveToFile(tmpFile)
+	err := storage.SaveToFile()
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
-	data, err := os.ReadFile(tmpFile)
+	data, err := os.ReadFile("test_metrics.json")
 	if err != nil {
 		t.Fatalf("Expected no error reading file, got %v", err)
 	}
@@ -259,8 +257,6 @@ func TestMemStorage_SaveToFile(t *testing.T) {
 }
 
 func TestMemStorage_LoadFromFile(t *testing.T) {
-	storage := NewMemStorage()
-
 	tmpFile := "test_metrics_load.json"
 	defer os.Remove(tmpFile)
 
@@ -274,10 +270,7 @@ func TestMemStorage_LoadFromFile(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	err = storage.LoadFromFile(tmpFile)
-	if err != nil {
-		t.Fatalf("Expected no error, got %v", err)
-	}
+	storage := NewMemStorage(tmpFile)
 
 	gaugeVal, err := storage.GetGauge("LoadedGauge")
 	if err != nil {
@@ -297,35 +290,28 @@ func TestMemStorage_LoadFromFile(t *testing.T) {
 }
 
 func TestMemStorage_LoadFromFile_NotExist(t *testing.T) {
-	storage := NewMemStorage()
+	storage := NewMemStorage("non_existing_file.json")
 
-	err := storage.LoadFromFile("non_existing_file.json")
-	if err != nil {
-		t.Fatalf("Expected no error for non-existing file, got %v", err)
+	if storage == nil {
+		t.Fatal("Expected storage to be non-nil")
 	}
 }
 
 func TestMemStorage_SaveAndLoad_RoundTrip(t *testing.T) {
-	storage := NewMemStorage()
+	storage := NewMemStorage("test_roundtrip.json")
+	defer os.Remove("test_roundtrip.json")
 
 	storage.SetGauge("Gauge1", 1.5)
 	storage.SetGauge("Gauge2", 2.5)
 	storage.AddCounter("Counter1", 100)
 	storage.AddCounter("Counter2", 200)
 
-	tmpFile := "test_roundtrip.json"
-	defer os.Remove(tmpFile)
-
-	err := storage.SaveToFile(tmpFile)
+	err := storage.SaveToFile()
 	if err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	newStorage := NewMemStorage()
-	err = newStorage.LoadFromFile(tmpFile)
-	if err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
+	newStorage := NewMemStorage("test_roundtrip.json")
 
 	g1, _ := newStorage.GetGauge("Gauge1")
 	if g1 != 1.5 {

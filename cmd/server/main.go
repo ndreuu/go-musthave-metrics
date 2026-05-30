@@ -1,9 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
+	"fmt"
+	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -31,21 +36,24 @@ func parseFlags() {
 	flag.BoolVar(&flagRestore, "r", false, "restore metrics from file")
 	flag.Parse()
 
-	if envAddr := os.Getenv("ADDRESS"); envAddr != "" {
+	if envAddr, ok := os.LookupEnv("ADDRESS"); ok && envAddr != "" {
 		flagRunAddr = envAddr
 	}
-	if envLogLevel := os.Getenv("LOG_LEVEL"); envLogLevel != "" {
+	if envLogLevel, ok := os.LookupEnv("LOG_LEVEL"); ok && envLogLevel != "" {
 		flagLogLevel = envLogLevel
 	}
-	if envInterval := os.Getenv("STORE_INTERVAL"); envInterval != "" {
-		if v, err := strconv.Atoi(envInterval); err == nil {
-			flagStoreInterval = v
+	if envInterval, ok := os.LookupEnv("STORE_INTERVAL"); ok && envInterval != "" {
+		v, err := strconv.Atoi(envInterval)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid STORE_INTERVAL value: %s\n", envInterval)
+			os.Exit(1)
 		}
+		flagStoreInterval = v
 	}
-	if envPath := os.Getenv("FILE_STORAGE_PATH"); envPath != "" {
+	if envPath, ok := os.LookupEnv("FILE_STORAGE_PATH"); ok && envPath != "" {
 		flagFilePath = envPath
 	}
-	if envRestore := os.Getenv("RESTORE"); envRestore != "" {
+	if envRestore, ok := os.LookupEnv("RESTORE"); ok && envRestore != "" {
 		flagRestore = envRestore == "true"
 	}
 }
@@ -53,29 +61,30 @@ func parseFlags() {
 func main() {
 	parseFlags()
 
-	if err := logger.Initialize(flagLogLevel); err != nil {
-		logger.Log.Fatal("Failed to initialize logger", zap.Error(err))
+	log, err := logger.NewLogger(flagLogLevel)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
+		os.Exit(1)
 	}
-	defer logger.Log.Sync()
+	defer log.Sync()
 
-	storage := repository.NewMemStorage()
-
+	storage := repository.NewMemStorage(flagFilePath)
 	if flagRestore && flagFilePath != "" {
-		if err := storage.LoadFromFile(flagFilePath); err != nil {
-			logger.Log.Warn("Failed to load metrics from file", zap.String("file", flagFilePath), zap.Error(err))
-		} else {
-			logger.Log.Info("Metrics restored from file", zap.String("file", flagFilePath))
-		}
+		log.Info("Metrics restored from file", zap.String("file", flagFilePath))
 	}
 
 	metricsService := service.NewMetricsService(storage)
 
-	metricsHandler := handler.NewMetricsHandler(metricsService)
+	var syncFilePath string
+	if flagStoreInterval == 0 {
+		syncFilePath = flagFilePath
+	}
+	metricsHandler := handler.NewMetricsHandler(metricsService, storage, syncFilePath)
 
 	r := gin.New()
 
 	r.Use(gin.Recovery())
-	r.Use(logger.RequestLogger())
+	r.Use(middleware.RequestLogger(log))
 	r.Use(middleware.GzipUnmarshal())
 	r.Use(middleware.Gzip())
 
@@ -86,23 +95,55 @@ func main() {
 	r.POST("/update", metricsHandler.UpdateMetricJSONHandler)
 	r.POST("/value", metricsHandler.GetMetricJSONHandler)
 
-	if flagStoreInterval > 0 {
-		go func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if flagStoreInterval > 0 && flagFilePath != "" {
+		go func(ctx context.Context) {
 			ticker := time.NewTicker(time.Duration(flagStoreInterval) * time.Second)
 			defer ticker.Stop()
-			for range ticker.C {
-				if err := storage.SaveToFile(flagFilePath); err != nil {
-					logger.Log.Error("Failed to save metrics to file", zap.String("file", flagFilePath), zap.Error(err))
-				} else {
-					logger.Log.Info("Metrics saved to file", zap.String("file", flagFilePath))
+			for {
+				select {
+				case <-ticker.C:
+					if err := storage.SaveToFile(); err != nil {
+						log.Error("Failed to save metrics to file", zap.String("file", flagFilePath), zap.Error(err))
+					} else {
+						log.Info("Metrics saved to file", zap.String("file", flagFilePath))
+					}
+				case <-ctx.Done():
+					log.Info("Store ticker stopped")
+					return
 				}
 			}
-		}()
+		}(ctx)
 	}
 
-	logger.Log.Info("Server starting", zap.String("address", flagRunAddr))
+	log.Info("Server starting", zap.String("address", flagRunAddr))
 
-	if err := r.Run(flagRunAddr); err != nil {
-		logger.Log.Fatal("Failed to start server", zap.Error(err))
+	server := &http.Server{
+		Addr:    flagRunAddr,
+		Handler: r,
 	}
+
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal("Failed to start server", zap.Error(err))
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Info("Shutting down server...")
+
+	ctxShutdown, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShutdown()
+
+	if err := server.Shutdown(ctxShutdown); err != nil {
+		log.Fatal("Server forced to shutdown", zap.Error(err))
+	}
+
+	cancel()
+	log.Info("Server stopped")
 }
