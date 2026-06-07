@@ -1,9 +1,15 @@
 package agent
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
+
+	models "go-musthave-metrics/internal/model"
 )
 
 type Sender struct {
@@ -19,21 +25,44 @@ func NewSender(serverAddress string) *Sender {
 }
 
 func (s *Sender) Send(metric *Metric) error {
-	var url string
-	switch metric.MType {
-	case "gauge":
-		url = fmt.Sprintf("%s/update/gauge/%s/%f", s.serverAddress, metric.Name, metric.Value)
-	case "counter":
-		url = fmt.Sprintf("%s/update/counter/%s/%d", s.serverAddress, metric.Name, int64(metric.Value))
-	default:
-		return fmt.Errorf("unknown metric type: %s", metric.MType)
+	m := models.Metrics{
+		ID:    metric.Name,
+		MType: metric.MType,
 	}
 
-	req, err := http.NewRequest(http.MethodPost, url, nil)
+	switch metric.MType {
+	case "gauge":
+		m.Value = &metric.Value
+	case "counter":
+		delta := int64(metric.Value)
+		m.Delta = &delta
+	}
+
+	jsonData, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+
+	var bodyReader io.Reader
+	var contentEncoding string
+
+	buf := &bytes.Buffer{}
+	gzWriter := gzip.NewWriter(buf)
+	if _, err := gzWriter.Write(jsonData); err != nil {
+		return fmt.Errorf("failed to compress data: %w", err)
+	}
+	if err := gzWriter.Close(); err != nil {
+		return fmt.Errorf("failed to close gzip writer: %w", err)
+	}
+	bodyReader = buf
+	contentEncoding = "gzip"
+
+	req, err := http.NewRequest(http.MethodPost, s.serverAddress+"/update", bodyReader)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", contentEncoding)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
