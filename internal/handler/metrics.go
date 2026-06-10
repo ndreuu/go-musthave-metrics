@@ -12,11 +12,11 @@ import (
 
 type MetricsHandler struct {
 	service  *service.MetricsService
-	storage  *repository.MemStorage
+	storage  repository.Storage
 	filePath string
 }
 
-func NewMetricsHandler(service *service.MetricsService, storage *repository.MemStorage, filePath string) *MetricsHandler {
+func NewMetricsHandler(service *service.MetricsService, storage repository.Storage, filePath string) *MetricsHandler {
 	return &MetricsHandler{
 		service:  service,
 		storage:  storage,
@@ -50,8 +50,8 @@ func (h *MetricsHandler) UpdateMetricHandler(c *gin.Context) {
 		return
 	}
 
-	if h.filePath != "" {
-		if err := h.storage.SaveToFile(); err != nil {
+	if memStorage, ok := h.storage.(*repository.MemStorage); ok && h.filePath != "" {
+		if err := memStorage.SaveToFile(); err != nil {
 			c.String(http.StatusInternalServerError, "Failed to save metrics: "+err.Error())
 			return
 		}
@@ -125,8 +125,8 @@ func (h *MetricsHandler) UpdateMetricJSONHandler(c *gin.Context) {
 		return
 	}
 
-	if h.filePath != "" {
-		if err := h.storage.SaveToFile(); err != nil {
+	if memStorage, ok := h.storage.(*repository.MemStorage); ok && h.filePath != "" {
+		if err := memStorage.SaveToFile(); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save metrics: " + err.Error()})
 			return
 		}
