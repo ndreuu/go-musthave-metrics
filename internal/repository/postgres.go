@@ -13,6 +13,7 @@ import (
 	_ "github.com/lib/pq"
 
 	models "go-musthave-metrics/internal/model"
+	"go-musthave-metrics/pkg/retry"
 )
 
 type PostgresStorage struct {
@@ -73,22 +74,27 @@ func (p *PostgresStorage) SetGauge(name string, value float64) error {
 		return fmt.Errorf("metric name cannot be empty")
 	}
 
-	query := `
-		INSERT INTO metrics (id, type, value, delta, updated_at)
-		VALUES ($1, 'gauge', $2, NULL, NOW())
-		ON CONFLICT (id) DO UPDATE SET
-			type = 'gauge',
-			value = EXCLUDED.value,
-			delta = NULL,
-			updated_at = NOW()
-	`
+	cfg := retry.DefaultConfig()
+	ctx := context.Background()
 
-	_, err := p.db.Exec(query, name, value)
-	if err != nil {
-		return fmt.Errorf("set gauge: %w", err)
-	}
+	return retry.Do(ctx, cfg, func() error {
+		query := `
+			INSERT INTO metrics (id, type, value, delta, updated_at)
+			VALUES ($1, 'gauge', $2, NULL, NOW())
+			ON CONFLICT (id) DO UPDATE SET
+				type = 'gauge',
+				value = EXCLUDED.value,
+				delta = NULL,
+				updated_at = NOW()
+		`
 
-	return nil
+		_, err := p.db.ExecContext(ctx, query, name, value)
+		if err != nil {
+			return fmt.Errorf("set gauge: %w", err)
+		}
+
+		return nil
+	})
 }
 
 func (p *PostgresStorage) AddCounter(name string, delta int64) error {
@@ -96,22 +102,27 @@ func (p *PostgresStorage) AddCounter(name string, delta int64) error {
 		return fmt.Errorf("metric name cannot be empty")
 	}
 
-	query := `
-		INSERT INTO metrics (id, type, delta, value, updated_at)
-		VALUES ($1, 'counter', $2, NULL, NOW())
-		ON CONFLICT (id) DO UPDATE SET
-			type = 'counter',
-			delta = COALESCE(metrics.delta, 0) + EXCLUDED.delta,
-			value = NULL,
-			updated_at = NOW()
-	`
+	cfg := retry.DefaultConfig()
+	ctx := context.Background()
 
-	_, err := p.db.Exec(query, name, delta)
-	if err != nil {
-		return fmt.Errorf("add counter: %w", err)
-	}
+	return retry.Do(ctx, cfg, func() error {
+		query := `
+			INSERT INTO metrics (id, type, delta, value, updated_at)
+			VALUES ($1, 'counter', $2, NULL, NOW())
+			ON CONFLICT (id) DO UPDATE SET
+				type = 'counter',
+				delta = COALESCE(metrics.delta, 0) + EXCLUDED.delta,
+				value = NULL,
+				updated_at = NOW()
+		`
 
-	return nil
+		_, err := p.db.ExecContext(ctx, query, name, delta)
+		if err != nil {
+			return fmt.Errorf("add counter: %w", err)
+		}
+
+		return nil
+	})
 }
 
 func (p *PostgresStorage) GetGauge(name string) (float64, error) {
@@ -119,20 +130,27 @@ func (p *PostgresStorage) GetGauge(name string) (float64, error) {
 		return 0, fmt.Errorf("metric name cannot be empty")
 	}
 
-	var value float64
-	err := p.db.QueryRow(
-		`SELECT value FROM metrics WHERE id = $1 AND type = 'gauge'`,
-		name,
-	).Scan(&value)
+	var result float64
+	cfg := retry.DefaultConfig()
+	ctx := context.Background()
 
-	if err == sql.ErrNoRows {
-		return 0, fmt.Errorf("gauge metric not found: %s", name)
-	}
-	if err != nil {
-		return 0, fmt.Errorf("get gauge: %w", err)
-	}
+	err := retry.Do(ctx, cfg, func() error {
+		err := p.db.QueryRowContext(ctx,
+			`SELECT value FROM metrics WHERE id = $1 AND type = 'gauge'`,
+			name,
+		).Scan(&result)
 
-	return value, nil
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("gauge metric not found: %s", name)
+		}
+		if err != nil {
+			return fmt.Errorf("get gauge: %w", err)
+		}
+
+		return nil
+	})
+
+	return result, err
 }
 
 func (p *PostgresStorage) GetCounter(name string) (int64, error) {
@@ -140,20 +158,27 @@ func (p *PostgresStorage) GetCounter(name string) (int64, error) {
 		return 0, fmt.Errorf("metric name cannot be empty")
 	}
 
-	var delta int64
-	err := p.db.QueryRow(
-		`SELECT delta FROM metrics WHERE id = $1 AND type = 'counter'`,
-		name,
-	).Scan(&delta)
+	var result int64
+	cfg := retry.DefaultConfig()
+	ctx := context.Background()
 
-	if err == sql.ErrNoRows {
-		return 0, fmt.Errorf("counter metric not found: %s", name)
-	}
-	if err != nil {
-		return 0, fmt.Errorf("get counter: %w", err)
-	}
+	err := retry.Do(ctx, cfg, func() error {
+		err := p.db.QueryRowContext(ctx,
+			`SELECT delta FROM metrics WHERE id = $1 AND type = 'counter'`,
+			name,
+		).Scan(&result)
 
-	return delta, nil
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("counter metric not found: %s", name)
+		}
+		if err != nil {
+			return fmt.Errorf("get counter: %w", err)
+		}
+
+		return nil
+	})
+
+	return result, err
 }
 
 func (p *PostgresStorage) GetAll() []models.Metrics {
@@ -214,55 +239,60 @@ func (p *PostgresStorage) UpdateMetricsBatch(metrics []models.Metrics) error {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	cfg := retry.DefaultConfig()
+	ctx := context.Background()
 
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback()
+	return retry.Do(ctx, cfg, func() error {
+		txCtx, txCancel := context.WithTimeout(ctx, 10*time.Second)
+		defer txCancel()
 
-	for _, metric := range metrics {
-		switch metric.MType {
-		case models.Gauge:
-			if metric.Value == nil {
-				continue
-			}
-			query := `
-				INSERT INTO metrics (id, type, value, delta, updated_at)
-				VALUES ($1, 'gauge', $2, NULL, NOW())
-				ON CONFLICT (id) DO UPDATE SET
-					type = 'gauge',
-					value = EXCLUDED.value,
-					delta = NULL,
-					updated_at = NOW()
-			`
-			if _, err := tx.Exec(query, metric.ID, *metric.Value); err != nil {
-				return fmt.Errorf("set gauge %s: %w", metric.ID, err)
-			}
-		case models.Counter:
-			if metric.Delta == nil {
-				continue
-			}
-			query := `
-				INSERT INTO metrics (id, type, delta, value, updated_at)
-				VALUES ($1, 'counter', $2, NULL, NOW())
-				ON CONFLICT (id) DO UPDATE SET
-					type = 'counter',
-					delta = COALESCE(metrics.delta, 0) + EXCLUDED.delta,
-					value = NULL,
-					updated_at = NOW()
-			`
-			if _, err := tx.Exec(query, metric.ID, *metric.Delta); err != nil {
-				return fmt.Errorf("add counter %s: %w", metric.ID, err)
+		tx, err := p.db.BeginTx(txCtx, nil)
+		if err != nil {
+			return fmt.Errorf("begin transaction: %w", err)
+		}
+		defer tx.Rollback()
+
+		for _, metric := range metrics {
+			switch metric.MType {
+			case models.Gauge:
+				if metric.Value == nil {
+					continue
+				}
+				query := `
+					INSERT INTO metrics (id, type, value, delta, updated_at)
+					VALUES ($1, 'gauge', $2, NULL, NOW())
+					ON CONFLICT (id) DO UPDATE SET
+						type = 'gauge',
+						value = EXCLUDED.value,
+						delta = NULL,
+						updated_at = NOW()
+				`
+				if _, err := tx.ExecContext(txCtx, query, metric.ID, *metric.Value); err != nil {
+					return fmt.Errorf("set gauge %s: %w", metric.ID, err)
+				}
+			case models.Counter:
+				if metric.Delta == nil {
+					continue
+				}
+				query := `
+					INSERT INTO metrics (id, type, delta, value, updated_at)
+					VALUES ($1, 'counter', $2, NULL, NOW())
+					ON CONFLICT (id) DO UPDATE SET
+						type = 'counter',
+						delta = COALESCE(metrics.delta, 0) + EXCLUDED.delta,
+						value = NULL,
+						updated_at = NOW()
+				`
+				if _, err := tx.ExecContext(txCtx, query, metric.ID, *metric.Delta); err != nil {
+					return fmt.Errorf("add counter %s: %w", metric.ID, err)
+				}
 			}
 		}
-	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
-	}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit transaction: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
