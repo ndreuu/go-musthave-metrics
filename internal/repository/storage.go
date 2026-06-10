@@ -10,4 +10,5 @@ type Storage interface {
 	GetGauge(name string) (float64, error)
 	GetCounter(name string) (int64, error)
 	GetAll() []models.Metrics
+	UpdateMetricsBatch(metrics []models.Metrics) error
 }

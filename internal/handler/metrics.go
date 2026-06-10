@@ -150,3 +150,30 @@ func (h *MetricsHandler) GetMetricJSONHandler(c *gin.Context) {
 
 	c.JSON(http.StatusOK, result)
 }
+
+func (h *MetricsHandler) UpdateMetricsBatchHandler(c *gin.Context) {
+	var metrics []models.Metrics
+	if err := c.ShouldBindJSON(&metrics); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON"})
+		return
+	}
+
+	if len(metrics) == 0 {
+		c.JSON(http.StatusOK, gin.H{"status": "OK"})
+		return
+	}
+
+	if err := h.service.UpdateMetricsBatch(metrics); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if memStorage, ok := h.storage.(*repository.MemStorage); ok && h.filePath != "" {
+		if err := memStorage.SaveToFile(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save metrics: " + err.Error()})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "OK"})
+}

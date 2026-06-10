@@ -55,7 +55,6 @@ func TestDB_UnreachableHost(t *testing.T) {
 }
 
 func TestDB_Close(t *testing.T) {
-	// Test closing nil DB
 	var db *DB
 	err := db.Close()
 	assert.NoError(t, err)

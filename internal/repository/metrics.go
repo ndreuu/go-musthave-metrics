@@ -180,3 +180,27 @@ func (m *MemStorage) loadFromFileLocked(filePath string) error {
 
 	return nil
 }
+
+func (m *MemStorage) UpdateMetricsBatch(metrics []models.Metrics) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, metric := range metrics {
+		switch metric.MType {
+		case models.Gauge:
+			if metric.Value != nil {
+				m.gauges[metric.ID] = *metric.Value
+			}
+		case models.Counter:
+			if metric.Delta != nil {
+				m.counters[metric.ID] += *metric.Delta
+			}
+		}
+	}
+
+	return m.saveToFileLocked()
+}

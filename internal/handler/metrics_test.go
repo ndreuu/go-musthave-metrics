@@ -258,3 +258,97 @@ func TestMetricsHandler_UpdateMetricHandler_Gauge_Overwrite(t *testing.T) {
 		t.Errorf("Expected gauge value 200, got %f", value)
 	}
 }
+
+func TestMetricsHandler_UpdateMetricsBatchHandler_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	storage := repository.NewMemStorage("")
+	metricsService := service.NewMetricsService(storage)
+	handler := NewMetricsHandler(metricsService, storage, "")
+
+	r := gin.New()
+	r.POST("/updates/", handler.UpdateMetricsBatchHandler)
+
+	jsonBody := `[
+		{"id": "BatchGauge1", "type": "gauge", "value": 111.111},
+		{"id": "BatchGauge2", "type": "gauge", "value": 222.222},
+		{"id": "BatchCounter1", "type": "counter", "delta": 10},
+		{"id": "BatchCounter2", "type": "counter", "delta": 20}
+	]`
+
+	req := httptest.NewRequest(http.MethodPost, "/updates/", strings.NewReader(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	g1, _ := storage.GetGauge("BatchGauge1")
+	if g1 != 111.111 {
+		t.Errorf("Expected BatchGauge1=111.111, got %f", g1)
+	}
+
+	g2, _ := storage.GetGauge("BatchGauge2")
+	if g2 != 222.222 {
+		t.Errorf("Expected BatchGauge2=222.222, got %f", g2)
+	}
+
+	c1, _ := storage.GetCounter("BatchCounter1")
+	if c1 != 10 {
+		t.Errorf("Expected BatchCounter1=10, got %d", c1)
+	}
+
+	c2, _ := storage.GetCounter("BatchCounter2")
+	if c2 != 20 {
+		t.Errorf("Expected BatchCounter2=20, got %d", c2)
+	}
+}
+
+func TestMetricsHandler_UpdateMetricsBatchHandler_EmptyBatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	storage := repository.NewMemStorage("")
+	metricsService := service.NewMetricsService(storage)
+	handler := NewMetricsHandler(metricsService, storage, "")
+
+	r := gin.New()
+	r.POST("/updates/", handler.UpdateMetricsBatchHandler)
+
+	req := httptest.NewRequest(http.MethodPost, "/updates/", strings.NewReader("[]"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+func TestMetricsHandler_UpdateMetricsBatchHandler_CounterAccumulate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	storage := repository.NewMemStorage("")
+	metricsService := service.NewMetricsService(storage)
+	handler := NewMetricsHandler(metricsService, storage, "")
+
+	r := gin.New()
+	r.POST("/updates/", handler.UpdateMetricsBatchHandler)
+
+	jsonBody1 := `[{"id": "AccumCounter", "type": "counter", "delta": 5}]`
+	req1 := httptest.NewRequest(http.MethodPost, "/updates/", strings.NewReader(jsonBody1))
+	req1.Header.Set("Content-Type", "application/json")
+	w1 := httptest.NewRecorder()
+	r.ServeHTTP(w1, req1)
+
+	jsonBody2 := `[{"id": "AccumCounter", "type": "counter", "delta": 15}]`
+	req2 := httptest.NewRequest(http.MethodPost, "/updates/", strings.NewReader(jsonBody2))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+
+	c, _ := storage.GetCounter("AccumCounter")
+	if c != 20 {
+		t.Errorf("Expected AccumCounter=20, got %d", c)
+	}
+}

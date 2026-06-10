@@ -130,6 +130,7 @@ func main() {
 
 	r.POST("/update", metricsHandler.UpdateMetricJSONHandler)
 	r.POST("/value", metricsHandler.GetMetricJSONHandler)
+	r.POST("/updates/", metricsHandler.UpdateMetricsBatchHandler)
 
 	if pingHandler != nil {
 		r.GET("/ping", pingHandler.PingHandler)

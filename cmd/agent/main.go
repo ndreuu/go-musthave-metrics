@@ -59,13 +59,12 @@ func main() {
 			select {
 			case <-ticker.C:
 				metrics := collector.GetMetrics()
-				errors := sender.SendAll(metrics)
-				if len(errors) > 0 {
-					for _, err := range errors {
-						log.Printf("Error sending metric: %v", err)
+				if len(metrics) > 0 {
+					if err := sender.SendBatch(metrics); err != nil {
+						log.Printf("Error sending batch: %v", err)
+					} else {
+						fmt.Printf("[%s] Sent %d metrics to server\n", time.Now().Format(time.RFC3339), len(metrics))
 					}
-				} else {
-					fmt.Printf("[%s] Sent %d metrics to server\n", time.Now().Format(time.RFC3339), len(metrics))
 				}
 			case <-ctx.Done():
 				fmt.Println("Sender shutting down")

@@ -14,6 +14,7 @@ type MetricsStorage interface {
 	GetGauge(name string) (float64, error)
 	GetCounter(name string) (int64, error)
 	GetAll() []models.Metrics
+	UpdateMetricsBatch(metrics []models.Metrics) error
 }
 
 type MetricsService struct {
@@ -175,4 +176,8 @@ func (s *MetricsService) GetMetricFromJSON(m *models.Metrics) (*models.Metrics, 
 	}
 
 	return result, nil
+}
+
+func (s *MetricsService) UpdateMetricsBatch(metrics []models.Metrics) error {
+	return s.storage.UpdateMetricsBatch(metrics)
 }

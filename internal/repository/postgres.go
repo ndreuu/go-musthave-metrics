@@ -208,3 +208,61 @@ func (p *PostgresStorage) Ping(ctx context.Context) error {
 
 	return p.db.PingContext(ctx)
 }
+
+func (p *PostgresStorage) UpdateMetricsBatch(metrics []models.Metrics) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	for _, metric := range metrics {
+		switch metric.MType {
+		case models.Gauge:
+			if metric.Value == nil {
+				continue
+			}
+			query := `
+				INSERT INTO metrics (id, type, value, delta, updated_at)
+				VALUES ($1, 'gauge', $2, NULL, NOW())
+				ON CONFLICT (id) DO UPDATE SET
+					type = 'gauge',
+					value = EXCLUDED.value,
+					delta = NULL,
+					updated_at = NOW()
+			`
+			if _, err := tx.Exec(query, metric.ID, *metric.Value); err != nil {
+				return fmt.Errorf("set gauge %s: %w", metric.ID, err)
+			}
+		case models.Counter:
+			if metric.Delta == nil {
+				continue
+			}
+			query := `
+				INSERT INTO metrics (id, type, delta, value, updated_at)
+				VALUES ($1, 'counter', $2, NULL, NOW())
+				ON CONFLICT (id) DO UPDATE SET
+					type = 'counter',
+					delta = COALESCE(metrics.delta, 0) + EXCLUDED.delta,
+					value = NULL,
+					updated_at = NOW()
+			`
+			if _, err := tx.Exec(query, metric.ID, *metric.Delta); err != nil {
+				return fmt.Errorf("add counter %s: %w", metric.ID, err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+
+	return nil
+}

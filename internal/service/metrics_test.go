@@ -61,6 +61,22 @@ func (m *MockStorage) GetAll() []models.Metrics {
 	return nil
 }
 
+func (m *MockStorage) UpdateMetricsBatch(metrics []models.Metrics) error {
+	for _, metric := range metrics {
+		switch metric.MType {
+		case models.Gauge:
+			if metric.Value != nil {
+				m.gauges[metric.ID] = *metric.Value
+			}
+		case models.Counter:
+			if metric.Delta != nil {
+				m.counters[metric.ID] += *metric.Delta
+			}
+		}
+	}
+	return nil
+}
+
 func TestNewMetricsService(t *testing.T) {
 	storage := NewMockStorage()
 	service := NewMetricsService(storage)
