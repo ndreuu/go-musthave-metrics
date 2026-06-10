@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go-musthave-metrics/internal/config/db"
 	"go-musthave-metrics/internal/handler"
 	"go-musthave-metrics/internal/logger"
 	"go-musthave-metrics/internal/middleware"
@@ -26,6 +27,7 @@ var (
 	flagStoreInterval int
 	flagFilePath      string
 	flagRestore       bool
+	flagDBDSN         string
 )
 
 func parseFlags() {
@@ -34,6 +36,7 @@ func parseFlags() {
 	flag.IntVar(&flagStoreInterval, "i", 300, "store interval in seconds")
 	flag.StringVar(&flagFilePath, "f", "metrics.json", "path to metrics file")
 	flag.BoolVar(&flagRestore, "r", false, "restore metrics from file")
+	flag.StringVar(&flagDBDSN, "d", "", "database DSN")
 	flag.Parse()
 
 	if envAddr, ok := os.LookupEnv("ADDRESS"); ok && envAddr != "" {
@@ -81,6 +84,15 @@ func main() {
 	}
 	metricsHandler := handler.NewMetricsHandler(metricsService, storage, syncFilePath)
 
+	dbConfig := db.NewConfig()
+	dbConfig.LoadFromEnv()
+	dbConfig.LoadFromFlags(flagDBDSN)
+
+	dbConn := db.NewDB(dbConfig.DSN)
+	defer dbConn.Close()
+
+	pingHandler := handler.NewPingHandler(dbConn)
+
 	r := gin.New()
 
 	r.Use(gin.Recovery())
@@ -91,9 +103,11 @@ func main() {
 	r.POST("/update/:type/:name/:value", metricsHandler.UpdateMetricHandler)
 	r.GET("/value/:type/:name", metricsHandler.GetMetricHandler)
 	r.GET("/", metricsHandler.ListMetricsHandler)
-	
+
 	r.POST("/update", metricsHandler.UpdateMetricJSONHandler)
 	r.POST("/value", metricsHandler.GetMetricJSONHandler)
+
+	r.GET("/ping", pingHandler.PingHandler)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
