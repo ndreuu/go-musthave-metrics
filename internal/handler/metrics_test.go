@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"context"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -50,7 +51,7 @@ func TestMetricsHandler_UpdateMetricHandler_Success_Gauge(t *testing.T) {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
 	}
 
-	value, err := storage.GetGauge("TestMetric")
+	value, err := storage.GetGauge(context.Background(), "TestMetric")
 	if err != nil {
 		t.Errorf("Expected no error getting gauge, got %v", err)
 	}
@@ -72,7 +73,7 @@ func TestMetricsHandler_UpdateMetricHandler_Success_Counter(t *testing.T) {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
 	}
 
-	value, err := storage.GetCounter("TestCounter")
+	value, err := storage.GetCounter(context.Background(), "TestCounter")
 	if err != nil {
 		t.Errorf("Expected no error getting counter, got %v", err)
 	}
@@ -111,7 +112,7 @@ func TestMetricsHandler_UpdateMetricHandler_EmptyName(t *testing.T) {
 
 func TestMetricsHandler_GetMetricHandler_Success_Gauge(t *testing.T) {
 	storage := repository.NewMemStorage("")
-	storage.SetGauge("TestGauge", 123.456)
+	storage.SetGauge(context.Background(), "TestGauge", 123.456)
 	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/value/gauge/TestGauge", nil)
@@ -130,7 +131,7 @@ func TestMetricsHandler_GetMetricHandler_Success_Gauge(t *testing.T) {
 
 func TestMetricsHandler_GetMetricHandler_Success_Counter(t *testing.T) {
 	storage := repository.NewMemStorage("")
-	storage.AddCounter("TestCounter", 42)
+	storage.AddCounter(context.Background(), "TestCounter", 42)
 	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/value/counter/TestCounter", nil)
@@ -195,8 +196,8 @@ func TestMetricsHandler_ListMetricsHandler_Empty(t *testing.T) {
 
 func TestMetricsHandler_ListMetricsHandler_WithMetrics(t *testing.T) {
 	storage := repository.NewMemStorage("")
-	storage.SetGauge("TestGauge", 100.5)
-	storage.AddCounter("TestCounter", 50)
+	storage.SetGauge(context.Background(), "TestGauge", 100.5)
+	storage.AddCounter(context.Background(), "TestCounter", 50)
 	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -229,7 +230,7 @@ func TestMetricsHandler_UpdateMetricHandler_Counter_Accumulate(t *testing.T) {
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	value, err := storage.GetCounter("TestCounter")
+	value, err := storage.GetCounter(context.Background(), "TestCounter")
 	if err != nil {
 		t.Errorf("Expected no error getting counter, got %v", err)
 	}
@@ -250,7 +251,7 @@ func TestMetricsHandler_UpdateMetricHandler_Gauge_Overwrite(t *testing.T) {
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	value, err := storage.GetGauge("TestGauge")
+	value, err := storage.GetGauge(context.Background(), "TestGauge")
 	if err != nil {
 		t.Errorf("Expected no error getting gauge, got %v", err)
 	}
@@ -285,22 +286,22 @@ func TestMetricsHandler_UpdateMetricsBatchHandler_Success(t *testing.T) {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
 	}
 
-	g1, _ := storage.GetGauge("BatchGauge1")
+	g1, _ := storage.GetGauge(context.Background(), "BatchGauge1")
 	if g1 != 111.111 {
 		t.Errorf("Expected BatchGauge1=111.111, got %f", g1)
 	}
 
-	g2, _ := storage.GetGauge("BatchGauge2")
+	g2, _ := storage.GetGauge(context.Background(), "BatchGauge2")
 	if g2 != 222.222 {
 		t.Errorf("Expected BatchGauge2=222.222, got %f", g2)
 	}
 
-	c1, _ := storage.GetCounter("BatchCounter1")
+	c1, _ := storage.GetCounter(context.Background(), "BatchCounter1")
 	if c1 != 10 {
 		t.Errorf("Expected BatchCounter1=10, got %d", c1)
 	}
 
-	c2, _ := storage.GetCounter("BatchCounter2")
+	c2, _ := storage.GetCounter(context.Background(), "BatchCounter2")
 	if c2 != 20 {
 		t.Errorf("Expected BatchCounter2=20, got %d", c2)
 	}
@@ -347,7 +348,7 @@ func TestMetricsHandler_UpdateMetricsBatchHandler_CounterAccumulate(t *testing.T
 	w2 := httptest.NewRecorder()
 	r.ServeHTTP(w2, req2)
 
-	c, _ := storage.GetCounter("AccumCounter")
+	c, _ := storage.GetCounter(context.Background(), "AccumCounter")
 	if c != 20 {
 		t.Errorf("Expected AccumCounter=20, got %d", c)
 	}

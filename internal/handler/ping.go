@@ -6,19 +6,22 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"go-musthave-metrics/internal/repository"
 )
 
-type PingHandler struct {
-	storage *repository.PostgresStorage
+type Pinger interface {
+	Ping(ctx context.Context) error
 }
 
-func NewPingHandler(storage *repository.PostgresStorage) *PingHandler {
-	return &PingHandler{storage: storage}
+type PingHandler struct {
+	pinger Pinger
+}
+
+func NewPingHandler(pinger Pinger) *PingHandler {
+	return &PingHandler{pinger: pinger}
 }
 
 func (h *PingHandler) PingHandler(c *gin.Context) {
-	if h.storage == nil {
+	if h.pinger == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "database not configured",
 		})
@@ -28,7 +31,7 @@ func (h *PingHandler) PingHandler(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
 
-	if err := h.storage.Ping(ctx); err != nil {
+	if err := h.pinger.Ping(ctx); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "database connection failed",
 			"details": err.Error(),

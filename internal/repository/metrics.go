@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -30,7 +31,7 @@ func NewMemStorage(filePath string) *MemStorage {
 	return m
 }
 
-func (m *MemStorage) SetGauge(name string, value float64) error {
+func (m *MemStorage) SetGauge(ctx context.Context, name string, value float64) error {
 	if name == "" {
 		return fmt.Errorf("metric name cannot be empty")
 	}
@@ -40,7 +41,7 @@ func (m *MemStorage) SetGauge(name string, value float64) error {
 	return m.saveToFileLocked()
 }
 
-func (m *MemStorage) AddCounter(name string, value int64) error {
+func (m *MemStorage) AddCounter(ctx context.Context, name string, value int64) error {
 	if name == "" {
 		return fmt.Errorf("metric name cannot be empty")
 	}
@@ -50,7 +51,7 @@ func (m *MemStorage) AddCounter(name string, value int64) error {
 	return m.saveToFileLocked()
 }
 
-func (m *MemStorage) GetGauge(name string) (float64, error) {
+func (m *MemStorage) GetGauge(ctx context.Context, name string) (float64, error) {
 	if name == "" {
 		return 0, fmt.Errorf("metric name cannot be empty")
 	}
@@ -63,7 +64,7 @@ func (m *MemStorage) GetGauge(name string) (float64, error) {
 	return value, nil
 }
 
-func (m *MemStorage) GetCounter(name string) (int64, error) {
+func (m *MemStorage) GetCounter(ctx context.Context, name string) (int64, error) {
 	if name == "" {
 		return 0, fmt.Errorf("metric name cannot be empty")
 	}
@@ -181,7 +182,7 @@ func (m *MemStorage) loadFromFileLocked(filePath string) error {
 	return nil
 }
 
-func (m *MemStorage) UpdateMetricsBatch(metrics []models.Metrics) error {
+func (m *MemStorage) UpdateMetricsBatch(ctx context.Context, metrics []models.Metrics) error {
 	if len(metrics) == 0 {
 		return nil
 	}

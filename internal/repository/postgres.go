@@ -69,13 +69,12 @@ func runMigrations(db *sql.DB) error {
 	return nil
 }
 
-func (p *PostgresStorage) SetGauge(name string, value float64) error {
+func (p *PostgresStorage) SetGauge(ctx context.Context, name string, value float64) error {
 	if name == "" {
 		return fmt.Errorf("metric name cannot be empty")
 	}
 
 	cfg := retry.DefaultConfig()
-	ctx := context.Background()
 
 	return retry.Do(ctx, cfg, func() error {
 		query := `
@@ -97,13 +96,12 @@ func (p *PostgresStorage) SetGauge(name string, value float64) error {
 	})
 }
 
-func (p *PostgresStorage) AddCounter(name string, delta int64) error {
+func (p *PostgresStorage) AddCounter(ctx context.Context, name string, delta int64) error {
 	if name == "" {
 		return fmt.Errorf("metric name cannot be empty")
 	}
 
 	cfg := retry.DefaultConfig()
-	ctx := context.Background()
 
 	return retry.Do(ctx, cfg, func() error {
 		query := `
@@ -125,14 +123,13 @@ func (p *PostgresStorage) AddCounter(name string, delta int64) error {
 	})
 }
 
-func (p *PostgresStorage) GetGauge(name string) (float64, error) {
+func (p *PostgresStorage) GetGauge(ctx context.Context, name string) (float64, error) {
 	if name == "" {
 		return 0, fmt.Errorf("metric name cannot be empty")
 	}
 
 	var result float64
 	cfg := retry.DefaultConfig()
-	ctx := context.Background()
 
 	err := retry.Do(ctx, cfg, func() error {
 		err := p.db.QueryRowContext(ctx,
@@ -153,14 +150,13 @@ func (p *PostgresStorage) GetGauge(name string) (float64, error) {
 	return result, err
 }
 
-func (p *PostgresStorage) GetCounter(name string) (int64, error) {
+func (p *PostgresStorage) GetCounter(ctx context.Context, name string) (int64, error) {
 	if name == "" {
 		return 0, fmt.Errorf("metric name cannot be empty")
 	}
 
 	var result int64
 	cfg := retry.DefaultConfig()
-	ctx := context.Background()
 
 	err := retry.Do(ctx, cfg, func() error {
 		err := p.db.QueryRowContext(ctx,
@@ -234,13 +230,12 @@ func (p *PostgresStorage) Ping(ctx context.Context) error {
 	return p.db.PingContext(ctx)
 }
 
-func (p *PostgresStorage) UpdateMetricsBatch(metrics []models.Metrics) error {
+func (p *PostgresStorage) UpdateMetricsBatch(ctx context.Context, metrics []models.Metrics) error {
 	if len(metrics) == 0 {
 		return nil
 	}
 
 	cfg := retry.DefaultConfig()
-	ctx := context.Background()
 
 	return retry.Do(ctx, cfg, func() error {
 		txCtx, txCancel := context.WithTimeout(ctx, 10*time.Second)

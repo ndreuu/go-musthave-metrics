@@ -45,7 +45,7 @@ func (h *MetricsHandler) UpdateMetricHandler(c *gin.Context) {
 		Value: value,
 	}
 
-	if err := h.service.UpdateMetric(result); err != nil {
+	if err := h.service.UpdateMetric(c.Request.Context(), result); err != nil {
 		c.String(http.StatusBadRequest, "Bad request: "+err.Error())
 		return
 	}
@@ -74,7 +74,7 @@ func (h *MetricsHandler) GetMetricHandler(c *gin.Context) {
 		return
 	}
 
-	value, err := h.service.GetMetricValue(mType, name)
+	value, err := h.service.GetMetricValue(c.Request.Context(), mType, name)
 	if err != nil {
 		c.String(http.StatusNotFound, "Not found")
 		return
@@ -120,7 +120,7 @@ func (h *MetricsHandler) UpdateMetricJSONHandler(c *gin.Context) {
 		return
 	}
 
-	if err := h.service.UpdateMetricFromJSON(&m); err != nil {
+	if err := h.service.UpdateMetricFromJSON(c.Request.Context(), &m); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -142,7 +142,7 @@ func (h *MetricsHandler) GetMetricJSONHandler(c *gin.Context) {
 		return
 	}
 
-	result, err := h.service.GetMetricFromJSON(&m)
+	result, err := h.service.GetMetricFromJSON(c.Request.Context(), &m)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -163,7 +163,7 @@ func (h *MetricsHandler) UpdateMetricsBatchHandler(c *gin.Context) {
 		return
 	}
 
-	if err := h.service.UpdateMetricsBatch(metrics); err != nil {
+	if err := h.service.UpdateMetricsBatch(c.Request.Context(), metrics); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
