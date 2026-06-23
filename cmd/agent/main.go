@@ -16,7 +16,7 @@ func main() {
 	cfg := agent.NewConfig()
 
 	collector := agent.NewCollector()
-	sender := agent.NewSender(cfg.ServerAddress)
+	sender := agent.NewSender(cfg.ServerAddress, cfg.Key)
 
 	fmt.Printf("Agent starting with configuration:\n")
 	fmt.Printf("  Poll Interval: %v\n", cfg.PollInterval)

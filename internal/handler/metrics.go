@@ -1,7 +1,12 @@
 package handler
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"html/template"
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -14,14 +19,51 @@ type MetricsHandler struct {
 	service  *service.MetricsService
 	storage  repository.Storage
 	filePath string
+	key      string
 }
 
-func NewMetricsHandler(service *service.MetricsService, storage repository.Storage, filePath string) *MetricsHandler {
+func NewMetricsHandler(service *service.MetricsService, storage repository.Storage, filePath string, key string) *MetricsHandler {
 	return &MetricsHandler{
 		service:  service,
 		storage:  storage,
 		filePath: filePath,
+		key:      key,
 	}
+}
+
+func (h *MetricsHandler) verifyHash(c *gin.Context) bool {
+	if h.key == "" {
+		return true
+	}
+
+	receivedHash := c.GetHeader("HashSHA256")
+	if receivedHash == "" {
+		return false
+	}
+
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return false
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+
+	expectedHash := calculateHash(body, h.key)
+	return receivedHash == expectedHash
+}
+
+func calculateHash(data []byte, key string) string {
+	h := sha256.New()
+	h.Write(data)
+	h.Write([]byte(key))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func (h *MetricsHandler) setResponseHash(c *gin.Context, data []byte) {
+	if h.key == "" {
+		return
+	}
+	hash := calculateHash(data, h.key)
+	c.Header("HashSHA256", hash)
 }
 
 func (h *MetricsHandler) UpdateMetricHandler(c *gin.Context) {
@@ -114,6 +156,21 @@ func (h *MetricsHandler) ListMetricsHandler(c *gin.Context) {
 }
 
 func (h *MetricsHandler) UpdateMetricJSONHandler(c *gin.Context) {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read body"})
+		return
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+
+	if h.key != "" {
+		receivedHash := c.GetHeader("HashSHA256")
+		if receivedHash == "" || receivedHash != calculateHash(body, h.key) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid hash"})
+			return
+		}
+	}
+
 	var m models.Metrics
 	if err := c.ShouldBindJSON(&m); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON"})
@@ -132,10 +189,28 @@ func (h *MetricsHandler) UpdateMetricJSONHandler(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "OK"})
+	resp := gin.H{"status": "OK"}
+	respData, _ := json.Marshal(resp)
+	h.setResponseHash(c, respData)
+	c.JSON(http.StatusOK, resp)
 }
 
 func (h *MetricsHandler) GetMetricJSONHandler(c *gin.Context) {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read body"})
+		return
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+
+	if h.key != "" {
+		receivedHash := c.GetHeader("HashSHA256")
+		if receivedHash == "" || receivedHash != calculateHash(body, h.key) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid hash"})
+			return
+		}
+	}
+
 	var m models.Metrics
 	if err := c.ShouldBindJSON(&m); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON"})
@@ -148,10 +223,27 @@ func (h *MetricsHandler) GetMetricJSONHandler(c *gin.Context) {
 		return
 	}
 
+	respData, _ := json.Marshal(result)
+	h.setResponseHash(c, respData)
 	c.JSON(http.StatusOK, result)
 }
 
 func (h *MetricsHandler) UpdateMetricsBatchHandler(c *gin.Context) {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read body"})
+		return
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+
+	if h.key != "" {
+		receivedHash := c.GetHeader("HashSHA256")
+		if receivedHash == "" || receivedHash != calculateHash(body, h.key) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid hash"})
+			return
+		}
+	}
+
 	var metrics []models.Metrics
 	if err := c.ShouldBindJSON(&metrics); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON"})
@@ -175,5 +267,8 @@ func (h *MetricsHandler) UpdateMetricsBatchHandler(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "OK"})
+	resp := gin.H{"status": "OK"}
+	respData, _ := json.Marshal(resp)
+	h.setResponseHash(c, respData)
+	c.JSON(http.StatusOK, resp)
 }

@@ -14,7 +14,7 @@ import (
 
 func TestNewSender(t *testing.T) {
 	serverAddress := "http://localhost:8080"
-	sender := NewSender(serverAddress)
+	sender := NewSender(serverAddress, "")
 
 	if sender == nil {
 		t.Fatal("Expected sender to be non-nil")
@@ -40,7 +40,7 @@ func TestSender_Send_Gauge(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := NewSender(server.URL)
+	sender := NewSender(server.URL, "")
 
 	metric := &Metric{
 		MType: "gauge",
@@ -77,7 +77,7 @@ func TestSender_Send_Counter(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := NewSender(server.URL)
+	sender := NewSender(server.URL, "")
 
 	metric := &Metric{
 		MType: "counter",
@@ -120,7 +120,7 @@ func TestSender_Send_GzipCompression(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := NewSender(server.URL)
+	sender := NewSender(server.URL, "")
 
 	metric := &Metric{
 		MType: "gauge",
@@ -145,7 +145,7 @@ func TestSender_Send_UnknownType(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := NewSender(server.URL)
+	sender := NewSender(server.URL, "")
 
 	metric := &Metric{
 		MType: "unknown",
@@ -168,7 +168,7 @@ func TestSender_Send_ServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := NewSender(server.URL)
+	sender := NewSender(server.URL, "")
 
 	metric := &Metric{
 		MType: "gauge",
@@ -194,7 +194,7 @@ func TestSender_SendAll(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := NewSender(server.URL)
+	sender := NewSender(server.URL, "")
 
 	metrics := []*Metric{
 		{MType: "gauge", Name: "Metric1", Value: 1.0},
@@ -218,7 +218,7 @@ func TestSender_SendAll_WithErrors(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := NewSender(server.URL)
+	sender := NewSender(server.URL, "")
 
 	metrics := []*Metric{
 		{MType: "gauge", Name: "Metric1", Value: 1.0},
@@ -240,7 +240,7 @@ func TestSender_SendMetricByName(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := NewSender(server.URL)
+	sender := NewSender(server.URL, "")
 	collector := NewCollector()
 	collector.Collect()
 
@@ -255,7 +255,7 @@ func TestSender_SendMetricByName(t *testing.T) {
 }
 
 func TestSender_SendMetricByName_NotFound(t *testing.T) {
-	sender := NewSender("http://localhost:8080")
+	sender := NewSender("http://localhost:8080", "")
 	collector := NewCollector()
 
 	err := sender.SendMetricByName(collector, "NonExistingMetric")
@@ -316,7 +316,7 @@ func TestSender_SendBatch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := NewSender(server.URL)
+	sender := NewSender(server.URL, "")
 
 	metrics := []*Metric{
 		{MType: "gauge", Name: "BatchGauge1", Value: 111.111},
@@ -346,7 +346,7 @@ func TestSender_SendBatch_Empty(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := NewSender(server.URL)
+	sender := NewSender(server.URL, "")
 
 	metrics := []*Metric{}
 
@@ -361,7 +361,7 @@ func TestSender_SendBatch_ServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := NewSender(server.URL)
+	sender := NewSender(server.URL, "")
 
 	metrics := []*Metric{
 		{MType: "gauge", Name: "TestMetric", Value: 123},

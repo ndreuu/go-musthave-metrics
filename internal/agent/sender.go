@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,13 +18,22 @@ import (
 type Sender struct {
 	serverAddress string
 	client        *http.Client
+	key           string
 }
 
-func NewSender(serverAddress string) *Sender {
+func NewSender(serverAddress string, key string) *Sender {
 	return &Sender{
 		serverAddress: serverAddress,
 		client:        &http.Client{},
+		key:           key,
 	}
+}
+
+func calculateHash(data []byte, key string) string {
+	h := sha256.New()
+	h.Write(data)
+	h.Write([]byte(key))
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func (s *Sender) Send(metric *Metric) error {
@@ -72,6 +83,10 @@ func (s *Sender) sendOnce(metric *Metric, endpoint string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
+	if s.key != "" {
+		hash := calculateHash(buf.Bytes(), s.key)
+		req.Header.Set("HashSHA256", hash)
+	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -146,6 +161,10 @@ func (s *Sender) sendBatchOnce(metrics []*Metric) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
+	if s.key != "" {
+		hash := calculateHash(buf.Bytes(), s.key)
+		req.Header.Set("HashSHA256", hash)
+	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {

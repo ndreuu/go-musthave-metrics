@@ -12,6 +12,7 @@ type Config struct {
 	PollInterval   time.Duration
 	ReportInterval time.Duration
 	ServerAddress  string
+	Key            string
 }
 
 func NewConfig() *Config {
@@ -19,11 +20,13 @@ func NewConfig() *Config {
 		serverAddress  string
 		reportInterval int
 		pollInterval   int
+		key            string
 	)
 
 	flag.StringVar(&serverAddress, "a", "localhost:8080", "address of the server")
 	flag.IntVar(&reportInterval, "r", 10, "report interval in seconds")
 	flag.IntVar(&pollInterval, "p", 2, "poll interval in seconds")
+	flag.StringVar(&key, "k", "", "key for signing data")
 	flag.Parse()
 
 	if envAddr, ok := os.LookupEnv("ADDRESS"); ok && envAddr != "" {
@@ -39,6 +42,9 @@ func NewConfig() *Config {
 			pollInterval = interval
 		}
 	}
+	if envKey, ok := os.LookupEnv("KEY"); ok && envKey != "" {
+		key = envKey
+	}
 
 	if serverAddress != "" && !strings.HasPrefix(serverAddress, "http://") && !strings.HasPrefix(serverAddress, "https://") {
 		serverAddress = "http://" + serverAddress
@@ -48,5 +54,6 @@ func NewConfig() *Config {
 		PollInterval:   time.Duration(pollInterval) * time.Second,
 		ReportInterval: time.Duration(reportInterval) * time.Second,
 		ServerAddress:  serverAddress,
+		Key:            key,
 	}
 }

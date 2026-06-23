@@ -16,7 +16,7 @@ func setupTestRouter(storage *repository.MemStorage) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService, storage, "")
+	handler := NewMetricsHandler(metricsService, storage, "", "")
 
 	r.POST("/update/:type/:name/:value", handler.UpdateMetricHandler)
 	r.GET("/value/:type/:name", handler.GetMetricHandler)
@@ -28,7 +28,7 @@ func setupTestRouter(storage *repository.MemStorage) *gin.Engine {
 func TestNewMetricsHandler(t *testing.T) {
 	storage := repository.NewMemStorage("")
 	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService, storage, "")
+	handler := NewMetricsHandler(metricsService, storage, "", "")
 
 	if handler == nil {
 		t.Fatal("Expected handler to be non-nil")
@@ -264,7 +264,7 @@ func TestMetricsHandler_UpdateMetricsBatchHandler_Success(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	storage := repository.NewMemStorage("")
 	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService, storage, "")
+	handler := NewMetricsHandler(metricsService, storage, "", "")
 
 	r := gin.New()
 	r.POST("/updates/", handler.UpdateMetricsBatchHandler)
@@ -311,7 +311,7 @@ func TestMetricsHandler_UpdateMetricsBatchHandler_EmptyBatch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	storage := repository.NewMemStorage("")
 	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService, storage, "")
+	handler := NewMetricsHandler(metricsService, storage, "", "")
 
 	r := gin.New()
 	r.POST("/updates/", handler.UpdateMetricsBatchHandler)
@@ -331,7 +331,7 @@ func TestMetricsHandler_UpdateMetricsBatchHandler_CounterAccumulate(t *testing.T
 	gin.SetMode(gin.TestMode)
 	storage := repository.NewMemStorage("")
 	metricsService := service.NewMetricsService(storage)
-	handler := NewMetricsHandler(metricsService, storage, "")
+	handler := NewMetricsHandler(metricsService, storage, "", "")
 
 	r := gin.New()
 	r.POST("/updates/", handler.UpdateMetricsBatchHandler)

@@ -28,6 +28,7 @@ var (
 	flagFilePath      string
 	flagRestore       bool
 	flagDBDSN         string
+	flagKey           string
 	filePathSet       bool
 )
 
@@ -38,6 +39,7 @@ func parseFlags() {
 	flag.StringVar(&flagFilePath, "f", "", "path to metrics file")
 	flag.BoolVar(&flagRestore, "r", false, "restore metrics from file")
 	flag.StringVar(&flagDBDSN, "d", "", "database DSN")
+	flag.StringVar(&flagKey, "k", "", "key for signing data")
 	flag.Parse()
 
 	flag.Visit(func(f *flag.Flag) {
@@ -66,6 +68,9 @@ func parseFlags() {
 	}
 	if envRestore, ok := os.LookupEnv("RESTORE"); ok && envRestore != "" {
 		flagRestore = envRestore == "true"
+	}
+	if envKey, ok := os.LookupEnv("KEY"); ok && envKey != "" {
+		flagKey = envKey
 	}
 }
 
@@ -110,7 +115,7 @@ func main() {
 	if flagStoreInterval == 0 && flagFilePath != "" && dbConn == nil {
 		syncFilePath = flagFilePath
 	}
-	metricsHandler := handler.NewMetricsHandler(metricsService, storage, syncFilePath)
+	metricsHandler := handler.NewMetricsHandler(metricsService, storage, syncFilePath, flagKey)
 
 	var pingHandler *handler.PingHandler
 	if dbConn != nil {
