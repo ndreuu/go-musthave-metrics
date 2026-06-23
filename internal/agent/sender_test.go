@@ -241,7 +241,7 @@ func TestSender_SendMetricByName(t *testing.T) {
 	defer server.Close()
 
 	sender := NewSender(server.URL, "")
-	collector := NewCollector()
+	collector := NewCollector(2)
 	collector.Collect()
 
 	err := sender.SendMetricByName(collector, "Alloc")
@@ -256,7 +256,7 @@ func TestSender_SendMetricByName(t *testing.T) {
 
 func TestSender_SendMetricByName_NotFound(t *testing.T) {
 	sender := NewSender("http://localhost:8080", "")
-	collector := NewCollector()
+	collector := NewCollector(2)
 
 	err := sender.SendMetricByName(collector, "NonExistingMetric")
 	if err == nil {

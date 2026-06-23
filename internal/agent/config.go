@@ -13,6 +13,7 @@ type Config struct {
 	ReportInterval time.Duration
 	ServerAddress  string
 	Key            string
+	RateLimit      int
 }
 
 func NewConfig() *Config {
@@ -21,12 +22,14 @@ func NewConfig() *Config {
 		reportInterval int
 		pollInterval   int
 		key            string
+		rateLimit      int
 	)
 
 	flag.StringVar(&serverAddress, "a", "localhost:8080", "address of the server")
 	flag.IntVar(&reportInterval, "r", 10, "report interval in seconds")
 	flag.IntVar(&pollInterval, "p", 2, "poll interval in seconds")
 	flag.StringVar(&key, "k", "", "key for signing data")
+	flag.IntVar(&rateLimit, "l", 2, "rate limit (max concurrent requests)")
 	flag.Parse()
 
 	if envAddr, ok := os.LookupEnv("ADDRESS"); ok && envAddr != "" {
@@ -45,6 +48,11 @@ func NewConfig() *Config {
 	if envKey, ok := os.LookupEnv("KEY"); ok && envKey != "" {
 		key = envKey
 	}
+	if envRateLimit, ok := os.LookupEnv("RATE_LIMIT"); ok && envRateLimit != "" {
+		if limit, err := strconv.Atoi(envRateLimit); err == nil {
+			rateLimit = limit
+		}
+	}
 
 	if serverAddress != "" && !strings.HasPrefix(serverAddress, "http://") && !strings.HasPrefix(serverAddress, "https://") {
 		serverAddress = "http://" + serverAddress
@@ -55,5 +63,6 @@ func NewConfig() *Config {
 		ReportInterval: time.Duration(reportInterval) * time.Second,
 		ServerAddress:  serverAddress,
 		Key:            key,
+		RateLimit:      rateLimit,
 	}
 }

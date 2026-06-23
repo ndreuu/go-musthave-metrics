@@ -15,7 +15,7 @@ import (
 func main() {
 	cfg := agent.NewConfig()
 
-	collector := agent.NewCollector()
+	collector := agent.NewCollector(cfg.RateLimit)
 	sender := agent.NewSender(cfg.ServerAddress, cfg.Key)
 
 	fmt.Printf("Agent starting with configuration:\n")
@@ -60,11 +60,7 @@ func main() {
 			case <-ticker.C:
 				metrics := collector.GetMetrics()
 				if len(metrics) > 0 {
-					if err := sender.SendBatch(metrics); err != nil {
-						log.Printf("Error sending batch: %v", err)
-					} else {
-						fmt.Printf("[%s] Sent %d metrics to server\n", time.Now().Format(time.RFC3339), len(metrics))
-					}
+					sendMetricsWithRateLimit(ctx, sender, metrics, collector)
 				}
 			case <-ctx.Done():
 				fmt.Println("Sender shutting down")
@@ -73,6 +69,7 @@ func main() {
 		}
 	}()
 
+	fmt.Printf("Rate limit: %d concurrent requests\n", cfg.RateLimit)
 	fmt.Println("Agent is running. Press Ctrl+C to stop.")
 
 	<-sigChan
@@ -81,4 +78,25 @@ func main() {
 
 	wg.Wait()
 	fmt.Println("Agent stopped")
+}
+
+func sendMetricsWithRateLimit(ctx context.Context, sender *agent.Sender, metrics []*agent.Metric, collector *agent.Collector) {
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, 2)
+
+	for _, metric := range metrics {
+		wg.Add(1)
+		go func(m *agent.Metric) {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			if err := sender.Send(m); err != nil {
+				log.Printf("Error sending metric %s: %v", m.Name, err)
+			}
+		}(metric)
+	}
+
+	wg.Wait()
+	fmt.Printf("[%s] Sent %d metrics to server\n", time.Now().Format(time.RFC3339), len(metrics))
 }

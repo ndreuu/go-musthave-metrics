@@ -1,10 +1,15 @@
 package agent
 
 import (
+	"context"
+	"fmt"
 	"math/rand"
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/mem"
 )
 
 type Metric struct {
@@ -18,12 +23,14 @@ type Collector struct {
 	metrics    map[string]*Metric
 	pollCount  int64
 	randSource *rand.Rand
+	semaphore  chan struct{}
 }
 
-func NewCollector() *Collector {
+func NewCollector(rateLimit int) *Collector {
 	return &Collector{
 		metrics:    make(map[string]*Metric),
 		randSource: rand.New(rand.NewSource(time.Now().UnixNano())),
+		semaphore:  make(chan struct{}, rateLimit),
 	}
 }
 
@@ -70,6 +77,8 @@ func (c *Collector) Collect() {
 	setGauge("Sys", float64(memStats.Sys))
 	setGauge("TotalAlloc", float64(memStats.TotalAlloc))
 
+	c.collectGopsutilMetrics(setGauge)
+
 	c.pollCount++
 
 	c.metrics["PollCount"] = &Metric{
@@ -84,6 +93,30 @@ func (c *Collector) Collect() {
 		Name:  "RandomValue",
 		Value: randomValue,
 	}
+}
+
+func (c *Collector) collectGopsutilMetrics(setGauge func(string, float64)) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if vmStat, err := mem.VirtualMemoryWithContext(ctx); err == nil {
+		setGauge("TotalMemory", float64(vmStat.Total))
+		setGauge("FreeMemory", float64(vmStat.Free))
+	}
+
+	if cpuPercentages, err := cpu.PercentWithContext(ctx, 0, true); err == nil {
+		for i, pct := range cpuPercentages {
+			setGauge("CPUutilization"+fmt.Sprintf("%d", i+1), pct)
+		}
+	}
+}
+
+func (c *Collector) Acquire() {
+	c.semaphore <- struct{}{}
+}
+
+func (c *Collector) Release() {
+	<-c.semaphore
 }
 
 func (c *Collector) GetMetrics() []*Metric {
