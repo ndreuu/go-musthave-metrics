@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go-musthave-metrics/internal/config/db"
 	"go-musthave-metrics/internal/handler"
 	"go-musthave-metrics/internal/logger"
 	"go-musthave-metrics/internal/middleware"
@@ -26,15 +27,24 @@ var (
 	flagStoreInterval int
 	flagFilePath      string
 	flagRestore       bool
+	flagDBDSN         string
+	filePathSet       bool
 )
 
 func parseFlags() {
 	flag.StringVar(&flagRunAddr, "a", ":8080", "address and port to run server")
 	flag.StringVar(&flagLogLevel, "l", "info", "log level")
 	flag.IntVar(&flagStoreInterval, "i", 300, "store interval in seconds")
-	flag.StringVar(&flagFilePath, "f", "metrics.json", "path to metrics file")
+	flag.StringVar(&flagFilePath, "f", "", "path to metrics file")
 	flag.BoolVar(&flagRestore, "r", false, "restore metrics from file")
+	flag.StringVar(&flagDBDSN, "d", "", "database DSN")
 	flag.Parse()
+
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "f" {
+			filePathSet = true
+		}
+	})
 
 	if envAddr, ok := os.LookupEnv("ADDRESS"); ok && envAddr != "" {
 		flagRunAddr = envAddr
@@ -52,6 +62,7 @@ func parseFlags() {
 	}
 	if envPath, ok := os.LookupEnv("FILE_STORAGE_PATH"); ok && envPath != "" {
 		flagFilePath = envPath
+		filePathSet = true
 	}
 	if envRestore, ok := os.LookupEnv("RESTORE"); ok && envRestore != "" {
 		flagRestore = envRestore == "true"
@@ -68,18 +79,43 @@ func main() {
 	}
 	defer log.Sync()
 
-	storage := repository.NewMemStorage(flagFilePath)
-	if flagRestore && flagFilePath != "" {
-		log.Info("Metrics restored from file", zap.String("file", flagFilePath))
+	dbConfig := db.NewConfig()
+	dbConfig.LoadFromEnv()
+	dbConfig.LoadFromFlags(flagDBDSN)
+
+	var storage repository.Storage
+	var dbConn *repository.PostgresStorage
+
+	if dbConfig.DSN != "" {
+		storage, err = repository.NewPostgresStorage(dbConfig.DSN)
+		if err != nil {
+			log.Fatal("Failed to connect to database", zap.Error(err))
+		}
+		dbConn = storage.(*repository.PostgresStorage)
+		log.Info("Connected to PostgreSQL")
+	} else if filePathSet && flagFilePath != "" {
+		storage = repository.NewMemStorage(flagFilePath)
+		if flagRestore {
+			log.Info("Metrics restored from file", zap.String("file", flagFilePath))
+		}
+		log.Info("Using file storage", zap.String("file", flagFilePath))
+	} else {
+		storage = repository.NewMemStorage("")
+		log.Info("Using in-memory storage")
 	}
 
 	metricsService := service.NewMetricsService(storage)
 
 	var syncFilePath string
-	if flagStoreInterval == 0 {
+	if flagStoreInterval == 0 && flagFilePath != "" && dbConn == nil {
 		syncFilePath = flagFilePath
 	}
 	metricsHandler := handler.NewMetricsHandler(metricsService, storage, syncFilePath)
+
+	var pingHandler *handler.PingHandler
+	if dbConn != nil {
+		pingHandler = handler.NewPingHandler(dbConn)
+	}
 
 	r := gin.New()
 
@@ -91,21 +127,26 @@ func main() {
 	r.POST("/update/:type/:name/:value", metricsHandler.UpdateMetricHandler)
 	r.GET("/value/:type/:name", metricsHandler.GetMetricHandler)
 	r.GET("/", metricsHandler.ListMetricsHandler)
-	
+
 	r.POST("/update", metricsHandler.UpdateMetricJSONHandler)
 	r.POST("/value", metricsHandler.GetMetricJSONHandler)
+	r.POST("/updates/", metricsHandler.UpdateMetricsBatchHandler)
+
+	if pingHandler != nil {
+		r.GET("/ping", pingHandler.PingHandler)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if flagStoreInterval > 0 && flagFilePath != "" {
+	if flagStoreInterval > 0 && flagFilePath != "" && dbConn == nil {
 		go func(ctx context.Context) {
 			ticker := time.NewTicker(time.Duration(flagStoreInterval) * time.Second)
 			defer ticker.Stop()
 			for {
 				select {
 				case <-ticker.C:
-					if err := storage.SaveToFile(); err != nil {
+					if err := storage.(*repository.MemStorage).SaveToFile(); err != nil {
 						log.Error("Failed to save metrics to file", zap.String("file", flagFilePath), zap.Error(err))
 					} else {
 						log.Info("Metrics saved to file", zap.String("file", flagFilePath))
@@ -145,5 +186,10 @@ func main() {
 	}
 
 	cancel()
+
+	if dbConn != nil {
+		dbConn.Close()
+	}
+
 	log.Info("Server stopped")
 }

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -19,7 +20,7 @@ func NewMockStorage() *MockStorage {
 	}
 }
 
-func (m *MockStorage) SetGauge(name string, value float64) error {
+func (m *MockStorage) SetGauge(ctx context.Context, name string, value float64) error {
 	if name == "" {
 		return nil
 	}
@@ -27,7 +28,7 @@ func (m *MockStorage) SetGauge(name string, value float64) error {
 	return nil
 }
 
-func (m *MockStorage) AddCounter(name string, value int64) error {
+func (m *MockStorage) AddCounter(ctx context.Context, name string, value int64) error {
 	if name == "" {
 		return nil
 	}
@@ -35,7 +36,7 @@ func (m *MockStorage) AddCounter(name string, value int64) error {
 	return nil
 }
 
-func (m *MockStorage) GetGauge(name string) (float64, error) {
+func (m *MockStorage) GetGauge(ctx context.Context, name string) (float64, error) {
 	if name == "" {
 		return 0, nil
 	}
@@ -46,7 +47,7 @@ func (m *MockStorage) GetGauge(name string) (float64, error) {
 	return value, nil
 }
 
-func (m *MockStorage) GetCounter(name string) (int64, error) {
+func (m *MockStorage) GetCounter(ctx context.Context, name string) (int64, error) {
 	if name == "" {
 		return 0, nil
 	}
@@ -58,6 +59,22 @@ func (m *MockStorage) GetCounter(name string) (int64, error) {
 }
 
 func (m *MockStorage) GetAll() []models.Metrics {
+	return nil
+}
+
+func (m *MockStorage) UpdateMetricsBatch(ctx context.Context, metrics []models.Metrics) error {
+	for _, metric := range metrics {
+		switch metric.MType {
+		case models.Gauge:
+			if metric.Value != nil {
+				m.gauges[metric.ID] = *metric.Value
+			}
+		case models.Counter:
+			if metric.Delta != nil {
+				m.counters[metric.ID] += *metric.Delta
+			}
+		}
+	}
 	return nil
 }
 
@@ -201,7 +218,7 @@ func TestMetricsService_UpdateMetric_Gauge(t *testing.T) {
 		Value: "123.456",
 	}
 
-	err := service.UpdateMetric(result)
+	err := service.UpdateMetric(context.Background(), result)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -221,7 +238,7 @@ func TestMetricsService_UpdateMetric_Counter(t *testing.T) {
 		Value: "100",
 	}
 
-	err := service.UpdateMetric(result)
+	err := service.UpdateMetric(context.Background(), result)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -241,7 +258,7 @@ func TestMetricsService_UpdateMetric_UnknownType(t *testing.T) {
 		Value: "100",
 	}
 
-	err := service.UpdateMetric(result)
+	err := service.UpdateMetric(context.Background(), result)
 	if err == nil {
 		t.Fatal("Expected error for unknown metric type")
 	}
@@ -260,7 +277,7 @@ func TestMetricsService_UpdateMetric_InvalidGaugeValue(t *testing.T) {
 		Value: "not-a-number",
 	}
 
-	err := service.UpdateMetric(result)
+	err := service.UpdateMetric(context.Background(), result)
 	if err == nil {
 		t.Fatal("Expected error for invalid gauge value")
 	}
@@ -276,7 +293,7 @@ func TestMetricsService_UpdateMetric_InvalidCounterValue(t *testing.T) {
 		Value: "not-a-number",
 	}
 
-	err := service.UpdateMetric(result)
+	err := service.UpdateMetric(context.Background(), result)
 	if err == nil {
 		t.Fatal("Expected error for invalid counter value")
 	}

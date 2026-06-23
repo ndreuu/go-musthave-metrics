@@ -290,3 +290,84 @@ func TestFormatMetricValue(t *testing.T) {
 		})
 	}
 }
+
+func TestSender_SendBatch(t *testing.T) {
+	var receivedURL string
+	var receivedMethod string
+	var receivedContentEncoding string
+	var receivedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedURL = r.URL.String()
+		receivedMethod = r.Method
+		receivedContentEncoding = r.Header.Get("Content-Encoding")
+
+		var err error
+		if r.Header.Get("Content-Encoding") == "gzip" {
+			gzReader, _ := gzip.NewReader(r.Body)
+			defer gzReader.Close()
+			receivedBody, err = io.ReadAll(gzReader)
+		} else {
+			receivedBody, err = io.ReadAll(r.Body)
+		}
+		assert.NoError(t, err)
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	sender := NewSender(server.URL)
+
+	metrics := []*Metric{
+		{MType: "gauge", Name: "BatchGauge1", Value: 111.111},
+		{MType: "gauge", Name: "BatchGauge2", Value: 222.222},
+		{MType: "counter", Name: "BatchCounter1", Value: 10},
+		{MType: "counter", Name: "BatchCounter2", Value: 20},
+	}
+
+	err := sender.SendBatch(metrics)
+	assert.NoError(t, err)
+
+	assert.Equal(t, http.MethodPost, receivedMethod)
+	assert.Equal(t, "/updates/", receivedURL)
+	assert.Equal(t, "gzip", receivedContentEncoding)
+
+	var receivedMetrics []map[string]interface{}
+	assert.NoError(t, json.Unmarshal(receivedBody, &receivedMetrics))
+	assert.Len(t, receivedMetrics, 4)
+}
+
+func TestSender_SendBatch_Empty(t *testing.T) {
+	requestCount := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	sender := NewSender(server.URL)
+
+	metrics := []*Metric{}
+
+	err := sender.SendBatch(metrics)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, requestCount)
+}
+
+func TestSender_SendBatch_ServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	sender := NewSender(server.URL)
+
+	metrics := []*Metric{
+		{MType: "gauge", Name: "TestMetric", Value: 123},
+	}
+
+	err := sender.SendBatch(metrics)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "server returned status 500")
+}

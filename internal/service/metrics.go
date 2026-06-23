@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -9,11 +10,12 @@ import (
 )
 
 type MetricsStorage interface {
-	SetGauge(name string, value float64) error
-	AddCounter(name string, value int64) error
-	GetGauge(name string) (float64, error)
-	GetCounter(name string) (int64, error)
+	SetGauge(ctx context.Context, name string, value float64) error
+	AddCounter(ctx context.Context, name string, value int64) error
+	GetGauge(ctx context.Context, name string) (float64, error)
+	GetCounter(ctx context.Context, name string) (int64, error)
 	GetAll() []models.Metrics
+	UpdateMetricsBatch(ctx context.Context, metrics []models.Metrics) error
 }
 
 type MetricsService struct {
@@ -76,37 +78,37 @@ func (s *MetricsService) ParseUpdatePath(path string) (*UpdateMetricResult, erro
 	}, nil
 }
 
-func (s *MetricsService) UpdateMetric(result *UpdateMetricResult) error {
+func (s *MetricsService) UpdateMetric(ctx context.Context, result *UpdateMetricResult) error {
 	if result.MType == "gauge" {
 		value, err := strconv.ParseFloat(result.Value, 64)
 		if err != nil {
 			return err
 		}
-		return s.storage.SetGauge(result.Name, value)
+		return s.storage.SetGauge(ctx, result.Name, value)
 	} else if result.MType == "counter" {
 		value, err := strconv.ParseInt(result.Value, 10, 64)
 		if err != nil {
 			return err
 		}
-		return s.storage.AddCounter(result.Name, value)
+		return s.storage.AddCounter(ctx, result.Name, value)
 	}
 	return fmt.Errorf("unknown metric type: %s", result.MType)
 }
 
-func (s *MetricsService) GetMetricValue(mType, name string) (string, error) {
+func (s *MetricsService) GetMetricValue(ctx context.Context, mType, name string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("metric name cannot be empty")
 	}
 
 	switch mType {
 	case "gauge":
-		value, err := s.storage.GetGauge(name)
+		value, err := s.storage.GetGauge(ctx, name)
 		if err != nil {
 			return "", err
 		}
 		return strconv.FormatFloat(value, 'f', -1, 64), nil
 	case "counter":
-		value, err := s.storage.GetCounter(name)
+		value, err := s.storage.GetCounter(ctx, name)
 		if err != nil {
 			return "", err
 		}
@@ -120,7 +122,7 @@ func (s *MetricsService) GetAllMetrics() []models.Metrics {
 	return s.storage.GetAll()
 }
 
-func (s *MetricsService) UpdateMetricFromJSON(m *models.Metrics) error {
+func (s *MetricsService) UpdateMetricFromJSON(ctx context.Context, m *models.Metrics) error {
 	if m.ID == "" {
 		return fmt.Errorf("metric ID cannot be empty")
 	}
@@ -133,18 +135,18 @@ func (s *MetricsService) UpdateMetricFromJSON(m *models.Metrics) error {
 		if m.Value == nil {
 			return fmt.Errorf("gauge metric must have value")
 		}
-		return s.storage.SetGauge(m.ID, *m.Value)
+		return s.storage.SetGauge(ctx, m.ID, *m.Value)
 	case models.Counter:
 		if m.Delta == nil {
 			return fmt.Errorf("counter metric must have delta")
 		}
-		return s.storage.AddCounter(m.ID, *m.Delta)
+		return s.storage.AddCounter(ctx, m.ID, *m.Delta)
 	default:
 		return fmt.Errorf("invalid metric type: must be 'gauge' or 'counter'")
 	}
 }
 
-func (s *MetricsService) GetMetricFromJSON(m *models.Metrics) (*models.Metrics, error) {
+func (s *MetricsService) GetMetricFromJSON(ctx context.Context, m *models.Metrics) (*models.Metrics, error) {
 	if m.ID == "" {
 		return nil, fmt.Errorf("metric ID cannot be empty")
 	}
@@ -159,13 +161,13 @@ func (s *MetricsService) GetMetricFromJSON(m *models.Metrics) (*models.Metrics, 
 
 	switch m.MType {
 	case models.Gauge:
-		value, err := s.storage.GetGauge(m.ID)
+		value, err := s.storage.GetGauge(ctx, m.ID)
 		if err != nil {
 			return nil, err
 		}
 		result.Value = &value
 	case models.Counter:
-		value, err := s.storage.GetCounter(m.ID)
+		value, err := s.storage.GetCounter(ctx, m.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -175,4 +177,8 @@ func (s *MetricsService) GetMetricFromJSON(m *models.Metrics) (*models.Metrics, 
 	}
 
 	return result, nil
+}
+
+func (s *MetricsService) UpdateMetricsBatch(ctx context.Context, metrics []models.Metrics) error {
+	return s.storage.UpdateMetricsBatch(ctx, metrics)
 }

@@ -3,13 +3,14 @@ package agent
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 
 	models "go-musthave-metrics/internal/model"
+	"go-musthave-metrics/pkg/retry"
 )
 
 type Sender struct {
@@ -25,6 +26,19 @@ func NewSender(serverAddress string) *Sender {
 }
 
 func (s *Sender) Send(metric *Metric) error {
+	return s.sendWithRetry(metric)
+}
+
+func (s *Sender) sendWithRetry(metric *Metric) error {
+	cfg := retry.DefaultConfig()
+	ctx := context.Background()
+
+	return retry.Do(ctx, cfg, func() error {
+		return s.sendOnce(metric, "/update")
+	})
+}
+
+func (s *Sender) sendOnce(metric *Metric, endpoint string) error {
 	m := models.Metrics{
 		ID:    metric.Name,
 		MType: metric.MType,
@@ -43,9 +57,6 @@ func (s *Sender) Send(metric *Metric) error {
 		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
-	var bodyReader io.Reader
-	var contentEncoding string
-
 	buf := &bytes.Buffer{}
 	gzWriter := gzip.NewWriter(buf)
 	if _, err := gzWriter.Write(jsonData); err != nil {
@@ -54,15 +65,13 @@ func (s *Sender) Send(metric *Metric) error {
 	if err := gzWriter.Close(); err != nil {
 		return fmt.Errorf("failed to close gzip writer: %w", err)
 	}
-	bodyReader = buf
-	contentEncoding = "gzip"
 
-	req, err := http.NewRequest(http.MethodPost, s.serverAddress+"/update", bodyReader)
+	req, err := http.NewRequest(http.MethodPost, s.serverAddress+endpoint, buf)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Content-Encoding", contentEncoding)
+	req.Header.Set("Content-Encoding", "gzip")
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -85,6 +94,70 @@ func (s *Sender) SendAll(metrics []*Metric) []error {
 		}
 	}
 	return errors
+}
+
+func (s *Sender) SendBatch(metrics []*Metric) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+
+	cfg := retry.DefaultConfig()
+	ctx := context.Background()
+
+	return retry.Do(ctx, cfg, func() error {
+		return s.sendBatchOnce(metrics)
+	})
+}
+
+func (s *Sender) sendBatchOnce(metrics []*Metric) error {
+	batch := make([]models.Metrics, 0, len(metrics))
+	for _, metric := range metrics {
+		m := models.Metrics{
+			ID:    metric.Name,
+			MType: metric.MType,
+		}
+		switch metric.MType {
+		case "gauge":
+			m.Value = &metric.Value
+		case "counter":
+			delta := int64(metric.Value)
+			m.Delta = &delta
+		}
+		batch = append(batch, m)
+	}
+
+	jsonData, err := json.Marshal(batch)
+	if err != nil {
+		return fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+
+	buf := &bytes.Buffer{}
+	gzWriter := gzip.NewWriter(buf)
+	if _, err := gzWriter.Write(jsonData); err != nil {
+		return fmt.Errorf("failed to compress data: %w", err)
+	}
+	if err := gzWriter.Close(); err != nil {
+		return fmt.Errorf("failed to close gzip writer: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, s.serverAddress+"/updates/", buf)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned status %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
 type MetricGetter interface {

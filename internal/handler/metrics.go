@@ -12,11 +12,11 @@ import (
 
 type MetricsHandler struct {
 	service  *service.MetricsService
-	storage  *repository.MemStorage
+	storage  repository.Storage
 	filePath string
 }
 
-func NewMetricsHandler(service *service.MetricsService, storage *repository.MemStorage, filePath string) *MetricsHandler {
+func NewMetricsHandler(service *service.MetricsService, storage repository.Storage, filePath string) *MetricsHandler {
 	return &MetricsHandler{
 		service:  service,
 		storage:  storage,
@@ -45,13 +45,13 @@ func (h *MetricsHandler) UpdateMetricHandler(c *gin.Context) {
 		Value: value,
 	}
 
-	if err := h.service.UpdateMetric(result); err != nil {
+	if err := h.service.UpdateMetric(c.Request.Context(), result); err != nil {
 		c.String(http.StatusBadRequest, "Bad request: "+err.Error())
 		return
 	}
 
-	if h.filePath != "" {
-		if err := h.storage.SaveToFile(); err != nil {
+	if memStorage, ok := h.storage.(*repository.MemStorage); ok && h.filePath != "" {
+		if err := memStorage.SaveToFile(); err != nil {
 			c.String(http.StatusInternalServerError, "Failed to save metrics: "+err.Error())
 			return
 		}
@@ -74,7 +74,7 @@ func (h *MetricsHandler) GetMetricHandler(c *gin.Context) {
 		return
 	}
 
-	value, err := h.service.GetMetricValue(mType, name)
+	value, err := h.service.GetMetricValue(c.Request.Context(), mType, name)
 	if err != nil {
 		c.String(http.StatusNotFound, "Not found")
 		return
@@ -120,13 +120,13 @@ func (h *MetricsHandler) UpdateMetricJSONHandler(c *gin.Context) {
 		return
 	}
 
-	if err := h.service.UpdateMetricFromJSON(&m); err != nil {
+	if err := h.service.UpdateMetricFromJSON(c.Request.Context(), &m); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if h.filePath != "" {
-		if err := h.storage.SaveToFile(); err != nil {
+	if memStorage, ok := h.storage.(*repository.MemStorage); ok && h.filePath != "" {
+		if err := memStorage.SaveToFile(); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save metrics: " + err.Error()})
 			return
 		}
@@ -142,11 +142,38 @@ func (h *MetricsHandler) GetMetricJSONHandler(c *gin.Context) {
 		return
 	}
 
-	result, err := h.service.GetMetricFromJSON(&m)
+	result, err := h.service.GetMetricFromJSON(c.Request.Context(), &m)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+func (h *MetricsHandler) UpdateMetricsBatchHandler(c *gin.Context) {
+	var metrics []models.Metrics
+	if err := c.ShouldBindJSON(&metrics); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON"})
+		return
+	}
+
+	if len(metrics) == 0 {
+		c.JSON(http.StatusOK, gin.H{"status": "OK"})
+		return
+	}
+
+	if err := h.service.UpdateMetricsBatch(c.Request.Context(), metrics); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if memStorage, ok := h.storage.(*repository.MemStorage); ok && h.filePath != "" {
+		if err := memStorage.SaveToFile(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save metrics: " + err.Error()})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "OK"})
 }

@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -23,12 +24,12 @@ func TestNewMemStorage(t *testing.T) {
 func TestMemStorage_SetGauge(t *testing.T) {
 	storage := NewMemStorage("")
 
-	err := storage.SetGauge("TestGauge", 123.456)
+	err := storage.SetGauge(context.Background(), "TestGauge", 123.456)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
-	value, err := storage.GetGauge("TestGauge")
+	value, err := storage.GetGauge(context.Background(), "TestGauge")
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -40,7 +41,7 @@ func TestMemStorage_SetGauge(t *testing.T) {
 func TestMemStorage_SetGauge_EmptyName(t *testing.T) {
 	storage := NewMemStorage("")
 
-	err := storage.SetGauge("", 123.456)
+	err := storage.SetGauge(context.Background(), "", 123.456)
 	if err == nil {
 		t.Fatal("Expected error for empty name")
 	}
@@ -52,17 +53,17 @@ func TestMemStorage_SetGauge_EmptyName(t *testing.T) {
 func TestMemStorage_SetGauge_Overwrite(t *testing.T) {
 	storage := NewMemStorage("")
 
-	err := storage.SetGauge("TestGauge", 100.0)
+	err := storage.SetGauge(context.Background(), "TestGauge", 100.0)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
-	err = storage.SetGauge("TestGauge", 200.0)
+	err = storage.SetGauge(context.Background(), "TestGauge", 200.0)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
-	value, err := storage.GetGauge("TestGauge")
+	value, err := storage.GetGauge(context.Background(), "TestGauge")
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -74,12 +75,12 @@ func TestMemStorage_SetGauge_Overwrite(t *testing.T) {
 func TestMemStorage_AddCounter(t *testing.T) {
 	storage := NewMemStorage("")
 
-	err := storage.AddCounter("TestCounter", 10)
+	err := storage.AddCounter(context.Background(), "TestCounter", 10)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
-	value, err := storage.GetCounter("TestCounter")
+	value, err := storage.GetCounter(context.Background(), "TestCounter")
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -91,7 +92,7 @@ func TestMemStorage_AddCounter(t *testing.T) {
 func TestMemStorage_AddCounter_EmptyName(t *testing.T) {
 	storage := NewMemStorage("")
 
-	err := storage.AddCounter("", 10)
+	err := storage.AddCounter(context.Background(), "", 10)
 	if err == nil {
 		t.Fatal("Expected error for empty name")
 	}
@@ -103,22 +104,22 @@ func TestMemStorage_AddCounter_EmptyName(t *testing.T) {
 func TestMemStorage_AddCounter_Accumulate(t *testing.T) {
 	storage := NewMemStorage("")
 
-	err := storage.AddCounter("TestCounter", 10)
+	err := storage.AddCounter(context.Background(), "TestCounter", 10)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
-	err = storage.AddCounter("TestCounter", 20)
+	err = storage.AddCounter(context.Background(), "TestCounter", 20)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
-	err = storage.AddCounter("TestCounter", 30)
+	err = storage.AddCounter(context.Background(), "TestCounter", 30)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
-	value, err := storage.GetCounter("TestCounter")
+	value, err := storage.GetCounter(context.Background(), "TestCounter")
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -130,7 +131,7 @@ func TestMemStorage_AddCounter_Accumulate(t *testing.T) {
 func TestMemStorage_GetGauge_NotFound(t *testing.T) {
 	storage := NewMemStorage("")
 
-	_, err := storage.GetGauge("NonExisting")
+	_, err := storage.GetGauge(context.Background(), "NonExisting")
 	if err == nil {
 		t.Fatal("Expected error for non-existing gauge")
 	}
@@ -139,7 +140,7 @@ func TestMemStorage_GetGauge_NotFound(t *testing.T) {
 func TestMemStorage_GetGauge_EmptyName(t *testing.T) {
 	storage := NewMemStorage("")
 
-	_, err := storage.GetGauge("")
+	_, err := storage.GetGauge(context.Background(), "")
 	if err == nil {
 		t.Fatal("Expected error for empty name")
 	}
@@ -151,7 +152,7 @@ func TestMemStorage_GetGauge_EmptyName(t *testing.T) {
 func TestMemStorage_GetCounter_NotFound(t *testing.T) {
 	storage := NewMemStorage("")
 
-	_, err := storage.GetCounter("NonExisting")
+	_, err := storage.GetCounter(context.Background(), "NonExisting")
 	if err == nil {
 		t.Fatal("Expected error for non-existing counter")
 	}
@@ -160,7 +161,7 @@ func TestMemStorage_GetCounter_NotFound(t *testing.T) {
 func TestMemStorage_GetCounter_EmptyName(t *testing.T) {
 	storage := NewMemStorage("")
 
-	_, err := storage.GetCounter("")
+	_, err := storage.GetCounter(context.Background(), "")
 	if err == nil {
 		t.Fatal("Expected error for empty name")
 	}
@@ -172,11 +173,11 @@ func TestMemStorage_GetCounter_EmptyName(t *testing.T) {
 func TestMemStorage_GetAll(t *testing.T) {
 	storage := NewMemStorage("")
 
-	storage.SetGauge("Gauge1", 1.0)
-	storage.SetGauge("Gauge2", 2.0)
+	storage.SetGauge(context.Background(), "Gauge1", 1.0)
+	storage.SetGauge(context.Background(), "Gauge2", 2.0)
 
-	storage.AddCounter("Counter1", 10)
-	storage.AddCounter("Counter2", 20)
+	storage.AddCounter(context.Background(), "Counter1", 10)
+	storage.AddCounter(context.Background(), "Counter2", 20)
 
 	metrics := storage.GetAll()
 
@@ -213,9 +214,10 @@ func TestMemStorage_Concurrency(t *testing.T) {
 
 	for i := 0; i < 10; i++ {
 		go func(id int) {
+			ctx := context.Background()
 			for j := 0; j < 100; j++ {
-				storage.SetGauge("Gauge"+string(rune(id)), float64(j))
-				storage.AddCounter("Counter"+string(rune(id)), int64(j))
+				storage.SetGauge(ctx, "Gauge"+string(rune(id)), float64(j))
+				storage.AddCounter(ctx, "Counter"+string(rune(id)), int64(j))
 				storage.GetAll()
 			}
 			done <- true
@@ -231,8 +233,8 @@ func TestMemStorage_SaveToFile(t *testing.T) {
 	storage := NewMemStorage("test_metrics.json")
 	defer os.Remove("test_metrics.json")
 
-	storage.SetGauge("TestGauge", 123.456)
-	storage.AddCounter("TestCounter", 42)
+	storage.SetGauge(context.Background(), "TestGauge", 123.456)
+	storage.AddCounter(context.Background(), "TestCounter", 42)
 
 	err := storage.SaveToFile()
 	if err != nil {
@@ -272,7 +274,7 @@ func TestMemStorage_LoadFromFile(t *testing.T) {
 
 	storage := NewMemStorage(tmpFile)
 
-	gaugeVal, err := storage.GetGauge("LoadedGauge")
+	gaugeVal, err := storage.GetGauge(context.Background(), "LoadedGauge")
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -280,7 +282,7 @@ func TestMemStorage_LoadFromFile(t *testing.T) {
 		t.Errorf("Expected gauge value 999.999, got %f", gaugeVal)
 	}
 
-	counterVal, err := storage.GetCounter("LoadedCounter")
+	counterVal, err := storage.GetCounter(context.Background(), "LoadedCounter")
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -301,10 +303,10 @@ func TestMemStorage_SaveAndLoad_RoundTrip(t *testing.T) {
 	storage := NewMemStorage("test_roundtrip.json")
 	defer os.Remove("test_roundtrip.json")
 
-	storage.SetGauge("Gauge1", 1.5)
-	storage.SetGauge("Gauge2", 2.5)
-	storage.AddCounter("Counter1", 100)
-	storage.AddCounter("Counter2", 200)
+	storage.SetGauge(context.Background(), "Gauge1", 1.5)
+	storage.SetGauge(context.Background(), "Gauge2", 2.5)
+	storage.AddCounter(context.Background(), "Counter1", 100)
+	storage.AddCounter(context.Background(), "Counter2", 200)
 
 	err := storage.SaveToFile()
 	if err != nil {
@@ -313,22 +315,22 @@ func TestMemStorage_SaveAndLoad_RoundTrip(t *testing.T) {
 
 	newStorage := NewMemStorage("test_roundtrip.json")
 
-	g1, _ := newStorage.GetGauge("Gauge1")
+	g1, _ := newStorage.GetGauge(context.Background(), "Gauge1")
 	if g1 != 1.5 {
 		t.Errorf("Expected Gauge1=1.5, got %f", g1)
 	}
 
-	g2, _ := newStorage.GetGauge("Gauge2")
+	g2, _ := newStorage.GetGauge(context.Background(), "Gauge2")
 	if g2 != 2.5 {
 		t.Errorf("Expected Gauge2=2.5, got %f", g2)
 	}
 
-	c1, _ := newStorage.GetCounter("Counter1")
+	c1, _ := newStorage.GetCounter(context.Background(), "Counter1")
 	if c1 != 100 {
 		t.Errorf("Expected Counter1=100, got %d", c1)
 	}
 
-	c2, _ := newStorage.GetCounter("Counter2")
+	c2, _ := newStorage.GetCounter(context.Background(), "Counter2")
 	if c2 != 200 {
 		t.Errorf("Expected Counter2=200, got %d", c2)
 	}
