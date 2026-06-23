@@ -123,6 +123,7 @@ func main() {
 	}
 
 	r := gin.New()
+	r.RedirectTrailingSlash = false
 
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestLogger(log))
@@ -134,8 +135,13 @@ func main() {
 	r.GET("/", metricsHandler.ListMetricsHandler)
 
 	r.POST("/update", metricsHandler.UpdateMetricJSONHandler)
-	r.POST("/value", metricsHandler.GetMetricJSONHandler)
+	r.POST("/update/", metricsHandler.UpdateMetricJSONHandler)
+
+	r.POST("/updates", metricsHandler.UpdateMetricsBatchHandler)
 	r.POST("/updates/", metricsHandler.UpdateMetricsBatchHandler)
+
+	r.POST("/value", metricsHandler.GetMetricJSONHandler)
+	r.POST("/value/", metricsHandler.GetMetricJSONHandler)
 
 	if pingHandler != nil {
 		r.GET("/ping", pingHandler.PingHandler)

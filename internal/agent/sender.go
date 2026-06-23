@@ -84,7 +84,7 @@ func (s *Sender) sendOnce(metric *Metric, endpoint string) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
 	if s.key != "" {
-		hash := calculateHash(buf.Bytes(), s.key)
+		hash := calculateHash(jsonData, s.key)
 		req.Header.Set("HashSHA256", hash)
 	}
 
@@ -162,7 +162,7 @@ func (s *Sender) sendBatchOnce(metrics []*Metric) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
 	if s.key != "" {
-		hash := calculateHash(buf.Bytes(), s.key)
+		hash := calculateHash(jsonData, s.key)
 		req.Header.Set("HashSHA256", hash)
 	}
 
