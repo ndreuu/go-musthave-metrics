@@ -195,7 +195,7 @@ func (h *MetricsHandler) UpdateMetricJSONHandler(c *gin.Context) {
 
 	if h.key != "" {
 		receivedHash := c.GetHeader("HashSHA256")
-		if receivedHash != "" && receivedHash != calculateHash(body, h.key) {
+		if receivedHash == "" || receivedHash != calculateHash(body, h.key) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid hash"})
 			return
 		}
@@ -235,7 +235,7 @@ func (h *MetricsHandler) GetMetricJSONHandler(c *gin.Context) {
 
 	if h.key != "" {
 		receivedHash := c.GetHeader("HashSHA256")
-		if receivedHash != "" && receivedHash != calculateHash(body, h.key) {
+		if receivedHash == "" || receivedHash != calculateHash(body, h.key) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid hash"})
 			return
 		}
@@ -297,7 +297,7 @@ func (h *MetricsHandler) UpdateMetricsBatchHandler(c *gin.Context) {
 
 	if h.key != "" {
 		receivedHash := c.GetHeader("HashSHA256")
-		if receivedHash != "" && receivedHash != calculateHash(body, h.key) {
+		if receivedHash == "" || receivedHash != calculateHash(body, h.key) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid hash"})
 			return
 		}

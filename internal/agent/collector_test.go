@@ -5,7 +5,7 @@ import (
 )
 
 func TestNewCollector(t *testing.T) {
-	collector := NewCollector(2)
+	collector := NewCollector()
 
 	if collector == nil {
 		t.Fatal("Expected collector to be non-nil")
@@ -19,7 +19,7 @@ func TestNewCollector(t *testing.T) {
 }
 
 func TestCollector_Collect(t *testing.T) {
-	collector := NewCollector(2)
+	collector := NewCollector()
 
 	collector.Collect()
 
@@ -72,7 +72,7 @@ func TestCollector_Collect(t *testing.T) {
 }
 
 func TestCollector_Collect_MultipleTimes(t *testing.T) {
-	collector := NewCollector(2)
+	collector := NewCollector()
 
 	collector.Collect()
 	collector.Collect()
@@ -88,7 +88,7 @@ func TestCollector_Collect_MultipleTimes(t *testing.T) {
 }
 
 func TestCollector_GetMetric(t *testing.T) {
-	collector := NewCollector(2)
+	collector := NewCollector()
 	collector.Collect()
 
 	metric := collector.GetMetric("Alloc")
@@ -109,7 +109,7 @@ func TestCollector_GetMetric(t *testing.T) {
 }
 
 func TestCollector_GetMetrics(t *testing.T) {
-	collector := NewCollector(2)
+	collector := NewCollector()
 	collector.Collect()
 
 	metrics := collector.GetMetrics()
@@ -128,7 +128,7 @@ func TestCollector_GetMetrics(t *testing.T) {
 }
 
 func TestCollector_Collect_RuntimeMetricsTypes(t *testing.T) {
-	collector := NewCollector(2)
+	collector := NewCollector()
 	collector.Collect()
 
 	runtimeGauges := []string{

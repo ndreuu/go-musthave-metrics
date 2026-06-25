@@ -54,6 +54,10 @@ func NewConfig() *Config {
 		}
 	}
 
+	if rateLimit <= 0 {
+		rateLimit = 1
+	}
+
 	if serverAddress != "" && !strings.HasPrefix(serverAddress, "http://") && !strings.HasPrefix(serverAddress, "https://") {
 		serverAddress = "http://" + serverAddress
 	}

@@ -23,14 +23,12 @@ type Collector struct {
 	metrics    map[string]*Metric
 	pollCount  int64
 	randSource *rand.Rand
-	semaphore  chan struct{}
 }
 
-func NewCollector(rateLimit int) *Collector {
+func NewCollector() *Collector {
 	return &Collector{
 		metrics:    make(map[string]*Metric),
 		randSource: rand.New(rand.NewSource(time.Now().UnixNano())),
-		semaphore:  make(chan struct{}, rateLimit),
 	}
 }
 
@@ -77,8 +75,6 @@ func (c *Collector) Collect() {
 	setGauge("Sys", float64(memStats.Sys))
 	setGauge("TotalAlloc", float64(memStats.TotalAlloc))
 
-	c.collectGopsutilMetrics(setGauge)
-
 	c.pollCount++
 
 	c.metrics["PollCount"] = &Metric{
@@ -95,7 +91,18 @@ func (c *Collector) Collect() {
 	}
 }
 
-func (c *Collector) collectGopsutilMetrics(setGauge func(string, float64)) {
+func (c *Collector) CollectGopsutil() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	setGauge := func(name string, value float64) {
+		c.metrics[name] = &Metric{
+			MType: "gauge",
+			Name:  name,
+			Value: value,
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -109,14 +116,6 @@ func (c *Collector) collectGopsutilMetrics(setGauge func(string, float64)) {
 			setGauge("CPUutilization"+fmt.Sprintf("%d", i+1), pct)
 		}
 	}
-}
-
-func (c *Collector) Acquire() {
-	c.semaphore <- struct{}{}
-}
-
-func (c *Collector) Release() {
-	<-c.semaphore
 }
 
 func (c *Collector) GetMetrics() []*Metric {
