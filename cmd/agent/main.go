@@ -93,6 +93,8 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		defer close(metricChan)
+
 		ticker := time.NewTicker(cfg.ReportInterval)
 		defer ticker.Stop()
 
@@ -105,6 +107,7 @@ func main() {
 						select {
 						case metricChan <- metric:
 						case <-ctx.Done():
+							fmt.Println("Sender shutting down")
 							return
 						}
 					}
@@ -112,7 +115,6 @@ func main() {
 				}
 			case <-ctx.Done():
 				fmt.Println("Sender shutting down")
-				close(metricChan)
 				return
 			}
 		}

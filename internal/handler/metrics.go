@@ -5,25 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"html/template"
 	"io"
-	"math/rand"
 	"net/http"
-	"sync"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	models "go-musthave-metrics/internal/model"
 	"go-musthave-metrics/internal/repository"
 	"go-musthave-metrics/internal/service"
-)
-
-var (
-	pollCountMu   sync.Mutex
-	pollCount     int64
-	randomRand    = rand.New(rand.NewSource(time.Now().UnixNano()))
-	randomRandMu  sync.Mutex
 )
 
 type MetricsHandler struct {
@@ -40,26 +29,6 @@ func NewMetricsHandler(service *service.MetricsService, storage repository.Stora
 		filePath: filePath,
 		key:      key,
 	}
-}
-
-func (h *MetricsHandler) verifyHash(c *gin.Context) bool {
-	if h.key == "" {
-		return true
-	}
-
-	receivedHash := c.GetHeader("HashSHA256")
-	if receivedHash == "" {
-		return false
-	}
-
-	body, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		return false
-	}
-	c.Request.Body = io.NopCloser(bytes.NewReader(body))
-
-	expectedHash := calculateHash(body, h.key)
-	return receivedHash == expectedHash
 }
 
 func calculateHash(data []byte, key string) string {
@@ -127,29 +96,10 @@ func (h *MetricsHandler) GetMetricHandler(c *gin.Context) {
 		return
 	}
 
-	var value string
-
-	switch name {
-	case "PollCount":
-		pollCountMu.Lock()
-		pollCount++
-		currentCount := pollCount
-		pollCountMu.Unlock()
-		value = fmt.Sprintf("%d", currentCount)
-
-	case "RandomValue":
-		randomRandMu.Lock()
-		randomValue := randomRand.Float64() * 1000
-		randomRandMu.Unlock()
-		value = fmt.Sprintf("%g", randomValue)
-
-	default:
-		var err error
-		value, err = h.service.GetMetricValue(c.Request.Context(), mType, name)
-		if err != nil {
-			c.String(http.StatusNotFound, "Not found")
-			return
-		}
+	value, err := h.service.GetMetricValue(c.Request.Context(), mType, name)
+	if err != nil {
+		c.String(http.StatusNotFound, "Not found")
+		return
 	}
 
 	c.String(http.StatusOK, value)
@@ -247,39 +197,10 @@ func (h *MetricsHandler) GetMetricJSONHandler(c *gin.Context) {
 		return
 	}
 
-	var result *models.Metrics
-
-	switch m.ID {
-	case "PollCount":
-		pollCountMu.Lock()
-		pollCount++
-		currentCount := pollCount
-		pollCountMu.Unlock()
-
-		delta := currentCount
-		result = &models.Metrics{
-			ID:    "PollCount",
-			MType: "counter",
-			Delta: &delta,
-		}
-
-	case "RandomValue":
-		randomRandMu.Lock()
-		randomValue := randomRand.Float64() * 1000
-		randomRandMu.Unlock()
-
-		result = &models.Metrics{
-			ID:    "RandomValue",
-			MType: "gauge",
-			Value: &randomValue,
-		}
-
-	default:
-		result, err = h.service.GetMetricFromJSON(c.Request.Context(), &m)
-		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
+	result, err := h.service.GetMetricFromJSON(c.Request.Context(), &m)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
 	}
 
 	respData, _ := json.Marshal(result)

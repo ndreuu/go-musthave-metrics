@@ -92,28 +92,30 @@ func (c *Collector) Collect() {
 }
 
 func (c *Collector) CollectGopsutil() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	setGauge := func(name string, value float64) {
-		c.metrics[name] = &Metric{
-			MType: "gauge",
-			Name:  name,
-			Value: value,
-		}
-	}
+	values := make(map[string]float64)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	if vmStat, err := mem.VirtualMemoryWithContext(ctx); err == nil {
-		setGauge("TotalMemory", float64(vmStat.Total))
-		setGauge("FreeMemory", float64(vmStat.Free))
+		values["TotalMemory"] = float64(vmStat.Total)
+		values["FreeMemory"] = float64(vmStat.Free)
 	}
 
 	if cpuPercentages, err := cpu.PercentWithContext(ctx, 0, true); err == nil {
 		for i, pct := range cpuPercentages {
-			setGauge("CPUutilization"+fmt.Sprintf("%d", i+1), pct)
+			values[fmt.Sprintf("CPUutilization%d", i+1)] = pct
+		}
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for name, value := range values {
+		c.metrics[name] = &Metric{
+			MType: "gauge",
+			Name:  name,
+			Value: value,
 		}
 	}
 }
