@@ -134,14 +134,18 @@ func main() {
 	r.GET("/value/:type/:name", metricsHandler.GetMetricHandler)
 	r.GET("/", metricsHandler.ListMetricsHandler)
 
-	r.POST("/update", metricsHandler.UpdateMetricJSONHandler)
-	r.POST("/update/", metricsHandler.UpdateMetricJSONHandler)
+	jsonRoutes := r.Group("/")
+	jsonRoutes.Use(middleware.HashSHA256(flagKey))
+	{
+		jsonRoutes.POST("/update", metricsHandler.UpdateMetricJSONHandler)
+		jsonRoutes.POST("/update/", metricsHandler.UpdateMetricJSONHandler)
 
-	r.POST("/updates", metricsHandler.UpdateMetricsBatchHandler)
-	r.POST("/updates/", metricsHandler.UpdateMetricsBatchHandler)
+		jsonRoutes.POST("/updates", metricsHandler.UpdateMetricsBatchHandler)
+		jsonRoutes.POST("/updates/", metricsHandler.UpdateMetricsBatchHandler)
 
-	r.POST("/value", metricsHandler.GetMetricJSONHandler)
-	r.POST("/value/", metricsHandler.GetMetricJSONHandler)
+		jsonRoutes.POST("/value", metricsHandler.GetMetricJSONHandler)
+		jsonRoutes.POST("/value/", metricsHandler.GetMetricJSONHandler)
+	}
 
 	if pingHandler != nil {
 		r.GET("/ping", pingHandler.PingHandler)

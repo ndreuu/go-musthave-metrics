@@ -46,4 +46,3 @@ func TestPingHandler_WithDB(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "ok")
 }
-

@@ -32,10 +32,10 @@ func Gzip() gin.HandlerFunc {
 
 type gzipResponseWriter struct {
 	gin.ResponseWriter
-	Writer     *gzip.Writer
+	Writer      *gzip.Writer
 	compressing bool
-	checked    bool
-	statusCode int
+	checked     bool
+	statusCode  int
 }
 
 func (w *gzipResponseWriter) shouldCompress() bool {

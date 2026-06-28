@@ -1,12 +1,10 @@
 package handler
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"html/template"
-	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -136,21 +134,6 @@ func (h *MetricsHandler) ListMetricsHandler(c *gin.Context) {
 }
 
 func (h *MetricsHandler) UpdateMetricJSONHandler(c *gin.Context) {
-	body, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read body"})
-		return
-	}
-	c.Request.Body = io.NopCloser(bytes.NewReader(body))
-
-	if h.key != "" {
-		receivedHash := c.GetHeader("HashSHA256")
-		if receivedHash == "" || receivedHash != calculateHash(body, h.key) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid hash"})
-			return
-		}
-	}
-
 	var m models.Metrics
 	if err := c.ShouldBindJSON(&m); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON"})
@@ -176,21 +159,6 @@ func (h *MetricsHandler) UpdateMetricJSONHandler(c *gin.Context) {
 }
 
 func (h *MetricsHandler) GetMetricJSONHandler(c *gin.Context) {
-	body, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read body"})
-		return
-	}
-	c.Request.Body = io.NopCloser(bytes.NewReader(body))
-
-	if h.key != "" {
-		receivedHash := c.GetHeader("HashSHA256")
-		if receivedHash == "" || receivedHash != calculateHash(body, h.key) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid hash"})
-			return
-		}
-	}
-
 	var m models.Metrics
 	if err := c.ShouldBindJSON(&m); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON"})
@@ -209,21 +177,6 @@ func (h *MetricsHandler) GetMetricJSONHandler(c *gin.Context) {
 }
 
 func (h *MetricsHandler) UpdateMetricsBatchHandler(c *gin.Context) {
-	body, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read body"})
-		return
-	}
-	c.Request.Body = io.NopCloser(bytes.NewReader(body))
-
-	if h.key != "" {
-		receivedHash := c.GetHeader("HashSHA256")
-		if receivedHash == "" || receivedHash != calculateHash(body, h.key) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid hash"})
-			return
-		}
-	}
-
 	var metrics []models.Metrics
 	if err := c.ShouldBindJSON(&metrics); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON"})
