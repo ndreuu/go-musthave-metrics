@@ -26,11 +26,12 @@ func HashSHA256(key string) gin.HandlerFunc {
 		c.Request.Body = io.NopCloser(bytes.NewReader(body))
 
 		receivedHash := c.GetHeader("HashSHA256")
-		expectedHash := calculateHash(body, key)
-
-		if receivedHash == "" || receivedHash != expectedHash {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid hash"})
-			return
+		if receivedHash != "" {
+			expectedHash := calculateHash(body, key)
+			if receivedHash != expectedHash {
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid hash"})
+				return
+			}
 		}
 
 		c.Next()
