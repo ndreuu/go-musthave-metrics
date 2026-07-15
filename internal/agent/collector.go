@@ -1,10 +1,15 @@
 package agent
 
 import (
+	"context"
+	"fmt"
 	"math/rand"
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/mem"
 )
 
 type Metric struct {
@@ -83,6 +88,35 @@ func (c *Collector) Collect() {
 		MType: "gauge",
 		Name:  "RandomValue",
 		Value: randomValue,
+	}
+}
+
+func (c *Collector) CollectGopsutil() {
+	values := make(map[string]float64)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if vmStat, err := mem.VirtualMemoryWithContext(ctx); err == nil {
+		values["TotalMemory"] = float64(vmStat.Total)
+		values["FreeMemory"] = float64(vmStat.Free)
+	}
+
+	if cpuPercentages, err := cpu.PercentWithContext(ctx, 0, true); err == nil {
+		for i, pct := range cpuPercentages {
+			values[fmt.Sprintf("CPUutilization%d", i+1)] = pct
+		}
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for name, value := range values {
+		c.metrics[name] = &Metric{
+			MType: "gauge",
+			Name:  name,
+			Value: value,
+		}
 	}
 }
 

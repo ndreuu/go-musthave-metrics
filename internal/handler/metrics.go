@@ -1,6 +1,9 @@
 package handler
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"html/template"
 	"net/http"
 
@@ -14,14 +17,31 @@ type MetricsHandler struct {
 	service  *service.MetricsService
 	storage  repository.Storage
 	filePath string
+	key      string
 }
 
-func NewMetricsHandler(service *service.MetricsService, storage repository.Storage, filePath string) *MetricsHandler {
+func NewMetricsHandler(service *service.MetricsService, storage repository.Storage, filePath string, key string) *MetricsHandler {
 	return &MetricsHandler{
 		service:  service,
 		storage:  storage,
 		filePath: filePath,
+		key:      key,
 	}
+}
+
+func calculateHash(data []byte, key string) string {
+	h := sha256.New()
+	h.Write(data)
+	h.Write([]byte(key))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func (h *MetricsHandler) setResponseHash(c *gin.Context, data []byte) {
+	if h.key == "" {
+		return
+	}
+	hash := calculateHash(data, h.key)
+	c.Header("HashSHA256", hash)
 }
 
 func (h *MetricsHandler) UpdateMetricHandler(c *gin.Context) {
@@ -132,7 +152,10 @@ func (h *MetricsHandler) UpdateMetricJSONHandler(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "OK"})
+	resp := gin.H{"status": "OK"}
+	respData, _ := json.Marshal(resp)
+	h.setResponseHash(c, respData)
+	c.JSON(http.StatusOK, resp)
 }
 
 func (h *MetricsHandler) GetMetricJSONHandler(c *gin.Context) {
@@ -148,6 +171,8 @@ func (h *MetricsHandler) GetMetricJSONHandler(c *gin.Context) {
 		return
 	}
 
+	respData, _ := json.Marshal(result)
+	h.setResponseHash(c, respData)
 	c.JSON(http.StatusOK, result)
 }
 
@@ -175,5 +200,8 @@ func (h *MetricsHandler) UpdateMetricsBatchHandler(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "OK"})
+	resp := gin.H{"status": "OK"}
+	respData, _ := json.Marshal(resp)
+	h.setResponseHash(c, respData)
+	c.JSON(http.StatusOK, resp)
 }
