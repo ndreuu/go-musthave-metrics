@@ -1,3 +1,4 @@
+// Package agent предоставляет функциональность для сбора и отправки метрик.
 package agent
 
 import (
@@ -12,12 +13,14 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 )
 
+// Metric представляет отдельную метрику с именем, типом и значением.
 type Metric struct {
 	MType string
 	Name  string
 	Value float64
 }
 
+// Collector собирает метрики Go runtime и системы.
 type Collector struct {
 	mu         sync.RWMutex
 	metrics    map[string]*Metric
@@ -25,6 +28,7 @@ type Collector struct {
 	randSource *rand.Rand
 }
 
+// NewCollector создает новый экземпляр Collector.
 func NewCollector() *Collector {
 	return &Collector{
 		metrics:    make(map[string]*Metric),
@@ -32,6 +36,8 @@ func NewCollector() *Collector {
 	}
 }
 
+// Collect собирает метрики Go runtime (Alloc, HeapAlloc, GC и др.).
+// Также обновляет счетчик PollCount и генерирует RandomValue.
 func (c *Collector) Collect() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -91,6 +97,8 @@ func (c *Collector) Collect() {
 	}
 }
 
+// CollectGopsutil собирает системные метрики с помощью gopsutil.
+// Собирает TotalMemory, FreeMemory и CPUutilization{N} для каждого ядра.
 func (c *Collector) CollectGopsutil() {
 	values := make(map[string]float64)
 
@@ -120,6 +128,7 @@ func (c *Collector) CollectGopsutil() {
 	}
 }
 
+// GetMetrics возвращает все собранные метрики.
 func (c *Collector) GetMetrics() []*Metric {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -135,6 +144,8 @@ func (c *Collector) GetMetrics() []*Metric {
 	return result
 }
 
+// GetMetric возвращает метрику по имени.
+// Возвращает nil, если метрика не найдена.
 func (c *Collector) GetMetric(name string) *Metric {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

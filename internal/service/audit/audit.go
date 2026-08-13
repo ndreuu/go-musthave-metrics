@@ -1,3 +1,4 @@
+// Package audit предоставляет сервис аудита для логирования событий.
 package audit
 
 import (
@@ -16,34 +17,40 @@ import (
 
 const defaultTimeout = 5 * time.Second
 
+// Observer определяет интерфейс наблюдателя для событий аудита.
 type Observer interface {
 	Notify(event *models.AuditEvent) error
 	Close() error
 }
 
+// Subject определяет интерфейс субъекта для управления наблюдателями.
 type Subject interface {
 	AddObserver(observer Observer)
 	RemoveObserver(observer Observer)
 	NotifyObservers(event *models.AuditEvent)
 }
 
+// AuditService реализует паттерн Observer для аудита событий.
 type AuditService struct {
 	observers []Observer
 	mu        sync.RWMutex
 }
 
+// NewAuditService создает новый экземпляр AuditService.
 func NewAuditService() *AuditService {
 	return &AuditService{
 		observers: make([]Observer, 0),
 	}
 }
 
+// AddObserver добавляет наблюдателя в список.
 func (s *AuditService) AddObserver(observer Observer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.observers = append(s.observers, observer)
 }
 
+// RemoveObserver удаляет наблюдателя из списка.
 func (s *AuditService) RemoveObserver(observer Observer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -55,6 +62,7 @@ func (s *AuditService) RemoveObserver(observer Observer) {
 	}
 }
 
+// NotifyObservers уведомляет всех наблюдателей о событии.
 func (s *AuditService) NotifyObservers(event *models.AuditEvent) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -66,6 +74,7 @@ func (s *AuditService) NotifyObservers(event *models.AuditEvent) {
 	}
 }
 
+// Close закрывает всех наблюдателей.
 func (s *AuditService) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -79,11 +88,14 @@ func (s *AuditService) Close() error {
 	return lastErr
 }
 
+// FileObserver реализует Observer для записи событий в файл.
 type FileObserver struct {
 	filePath string
 	mu       sync.Mutex
 }
 
+// NewFileObserver создает наблюдателя для записи в файл.
+// filePath - путь к файлу для записи событий аудита.
 func NewFileObserver(filePath string) (*FileObserver, error) {
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
@@ -128,11 +140,14 @@ func (o *FileObserver) Close() error {
 	return nil
 }
 
+// URLObserver реализует Observer для отправки событий на URL.
 type URLObserver struct {
 	url    string
 	client *http.Client
 }
 
+// NewURLObserver создает наблюдателя для отправки событий на URL.
+// url - адрес сервера для получения событий аудита.
 func NewURLObserver(url string) *URLObserver {
 	return &URLObserver{
 		url:    url,

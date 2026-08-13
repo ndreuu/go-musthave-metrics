@@ -1,5 +1,6 @@
 package models
 
+// AuditEvent представляет событие аудита для логирования запросов.
 type AuditEvent struct {
 	Timestamp int64    `json:"ts"`
 	Metrics   []string `json:"metrics"`

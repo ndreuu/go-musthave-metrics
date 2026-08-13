@@ -1,3 +1,4 @@
+// Package repository предоставляет реализации хранилищ для метрик.
 package repository
 
 import (
@@ -10,6 +11,7 @@ import (
 	models "go-musthave-metrics/internal/model"
 )
 
+// MemStorage реализует интерфейс MetricsStorage в памяти с сохранением в файл.
 type MemStorage struct {
 	mu       sync.RWMutex
 	gauges   map[string]float64
@@ -17,6 +19,9 @@ type MemStorage struct {
 	filePath string
 }
 
+// NewMemStorage создает новое хранилище метрик в памяти.
+// filePath - путь к файлу для сохранения метрик (пустая строка отключает сохранение).
+// При создании загружает существующие метрики из файла, если он существует.
 func NewMemStorage(filePath string) *MemStorage {
 	m := &MemStorage{
 		gauges:   make(map[string]float64),
@@ -31,6 +36,9 @@ func NewMemStorage(filePath string) *MemStorage {
 	return m
 }
 
+// SetGauge устанавливает значение gauge метрики.
+// name - имя метрики, value - значение.
+// Сохраняет метрики в файл, если filePath указан.
 func (m *MemStorage) SetGauge(ctx context.Context, name string, value float64) error {
 	if name == "" {
 		return fmt.Errorf("metric name cannot be empty")
