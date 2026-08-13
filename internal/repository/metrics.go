@@ -36,9 +36,13 @@ func (m *MemStorage) SetGauge(ctx context.Context, name string, value float64) e
 		return fmt.Errorf("metric name cannot be empty")
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.gauges[name] = value
-	return m.saveToFileLocked()
+	m.mu.Unlock()
+	
+	if m.filePath != "" {
+		return m.SaveToFile()
+	}
+	return nil
 }
 
 func (m *MemStorage) AddCounter(ctx context.Context, name string, value int64) error {
@@ -46,9 +50,13 @@ func (m *MemStorage) AddCounter(ctx context.Context, name string, value int64) e
 		return fmt.Errorf("metric name cannot be empty")
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.counters[name] += value
-	return m.saveToFileLocked()
+	m.mu.Unlock()
+	
+	if m.filePath != "" {
+		return m.SaveToFile()
+	}
+	return nil
 }
 
 func (m *MemStorage) GetGauge(ctx context.Context, name string) (float64, error) {
@@ -80,7 +88,13 @@ func (m *MemStorage) GetCounter(ctx context.Context, name string) (int64, error)
 func (m *MemStorage) GetAll() []models.Metrics {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	var metrics []models.Metrics
+	
+	totalCount := len(m.gauges) + len(m.counters)
+	if totalCount == 0 {
+		return make([]models.Metrics, 0)
+	}
+	
+	metrics := make([]models.Metrics, 0, totalCount)
 	for name, value := range m.gauges {
 		metrics = append(metrics, models.Metrics{
 			ID:    name,

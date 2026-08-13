@@ -154,10 +154,7 @@ func (s *MetricsService) GetMetricFromJSON(ctx context.Context, m *models.Metric
 		return nil, fmt.Errorf("metric type cannot be empty")
 	}
 
-	result := &models.Metrics{
-		ID:    m.ID,
-		MType: m.MType,
-	}
+	result := m
 
 	switch m.MType {
 	case models.Gauge:
@@ -166,12 +163,14 @@ func (s *MetricsService) GetMetricFromJSON(ctx context.Context, m *models.Metric
 			return nil, err
 		}
 		result.Value = &value
+		result.Delta = nil
 	case models.Counter:
 		value, err := s.storage.GetCounter(ctx, m.ID)
 		if err != nil {
 			return nil, err
 		}
 		result.Delta = &value
+		result.Value = nil
 	default:
 		return nil, fmt.Errorf("invalid metric type: must be 'gauge' or 'counter'")
 	}
