@@ -38,7 +38,7 @@ func (m *MemStorage) SetGauge(ctx context.Context, name string, value float64) e
 	m.mu.Lock()
 	m.gauges[name] = value
 	m.mu.Unlock()
-	
+
 	if m.filePath != "" {
 		return m.SaveToFile()
 	}
@@ -52,7 +52,7 @@ func (m *MemStorage) AddCounter(ctx context.Context, name string, value int64) e
 	m.mu.Lock()
 	m.counters[name] += value
 	m.mu.Unlock()
-	
+
 	if m.filePath != "" {
 		return m.SaveToFile()
 	}
@@ -88,12 +88,12 @@ func (m *MemStorage) GetCounter(ctx context.Context, name string) (int64, error)
 func (m *MemStorage) GetAll() []models.Metrics {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	totalCount := len(m.gauges) + len(m.counters)
 	if totalCount == 0 {
 		return make([]models.Metrics, 0)
 	}
-	
+
 	metrics := make([]models.Metrics, 0, totalCount)
 	for name, value := range m.gauges {
 		metrics = append(metrics, models.Metrics{

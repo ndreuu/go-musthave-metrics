@@ -13,7 +13,7 @@ import (
 )
 
 type Metric struct {
-	MType string 
+	MType string
 	Name  string
 	Value float64
 }
