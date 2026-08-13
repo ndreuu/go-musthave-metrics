@@ -18,6 +18,7 @@ import (
 	"go-musthave-metrics/internal/middleware"
 	"go-musthave-metrics/internal/repository"
 	"go-musthave-metrics/internal/service"
+	"go-musthave-metrics/internal/service/audit"
 	"go.uber.org/zap"
 )
 
@@ -29,6 +30,8 @@ var (
 	flagRestore       bool
 	flagDBDSN         string
 	flagKey           string
+	flagAuditFile     string
+	flagAuditURL      string
 	filePathSet       bool
 )
 
@@ -40,6 +43,8 @@ func parseFlags() {
 	flag.BoolVar(&flagRestore, "r", false, "restore metrics from file")
 	flag.StringVar(&flagDBDSN, "d", "", "database DSN")
 	flag.StringVar(&flagKey, "k", "", "key for signing data")
+	flag.StringVar(&flagAuditFile, "audit-file", "", "path to audit log file")
+	flag.StringVar(&flagAuditURL, "audit-url", "", "URL to send audit logs")
 	flag.Parse()
 
 	flag.Visit(func(f *flag.Flag) {
@@ -71,6 +76,12 @@ func parseFlags() {
 	}
 	if envKey, ok := os.LookupEnv("KEY"); ok && envKey != "" {
 		flagKey = envKey
+	}
+	if envAuditFile, ok := os.LookupEnv("AUDIT_FILE"); ok && envAuditFile != "" {
+		flagAuditFile = envAuditFile
+	}
+	if envAuditURL, ok := os.LookupEnv("AUDIT_URL"); ok && envAuditURL != "" {
+		flagAuditURL = envAuditURL
 	}
 }
 
@@ -111,11 +122,28 @@ func main() {
 
 	metricsService := service.NewMetricsService(storage)
 
+	auditService := audit.NewAuditService()
+
+	if flagAuditFile != "" {
+		fileObserver, err := audit.NewFileObserver(flagAuditFile)
+		if err != nil {
+			log.Fatal("Failed to create file audit observer", zap.Error(err))
+		}
+		auditService.AddObserver(fileObserver)
+		log.Info("Audit to file enabled", zap.String("file", flagAuditFile))
+	}
+
+	if flagAuditURL != "" {
+		urlObserver := audit.NewURLObserver(flagAuditURL)
+		auditService.AddObserver(urlObserver)
+		log.Info("Audit to URL enabled", zap.String("url", flagAuditURL))
+	}
+
 	var syncFilePath string
 	if flagStoreInterval == 0 && flagFilePath != "" && dbConn == nil {
 		syncFilePath = flagFilePath
 	}
-	metricsHandler := handler.NewMetricsHandler(metricsService, storage, syncFilePath, flagKey)
+	metricsHandler := handler.NewMetricsHandler(metricsService, storage, syncFilePath, flagKey, auditService)
 
 	var pingHandler *handler.PingHandler
 	if dbConn != nil {
@@ -201,6 +229,12 @@ func main() {
 	}
 
 	cancel()
+
+	if auditService != nil {
+		if err := auditService.Close(); err != nil {
+			log.Error("Failed to close audit service", zap.Error(err))
+		}
+	}
 
 	if dbConn != nil {
 		dbConn.Close()

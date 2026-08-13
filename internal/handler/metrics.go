@@ -6,26 +6,30 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	models "go-musthave-metrics/internal/model"
 	"go-musthave-metrics/internal/repository"
 	"go-musthave-metrics/internal/service"
+	"go-musthave-metrics/internal/service/audit"
 )
 
 type MetricsHandler struct {
-	service  *service.MetricsService
-	storage  repository.Storage
-	filePath string
-	key      string
+	service      *service.MetricsService
+	storage      repository.Storage
+	filePath     string
+	key          string
+	auditService *audit.AuditService
 }
 
-func NewMetricsHandler(service *service.MetricsService, storage repository.Storage, filePath string, key string) *MetricsHandler {
+func NewMetricsHandler(service *service.MetricsService, storage repository.Storage, filePath string, key string, auditService *audit.AuditService) *MetricsHandler {
 	return &MetricsHandler{
-		service:  service,
-		storage:  storage,
-		filePath: filePath,
-		key:      key,
+		service:      service,
+		storage:      storage,
+		filePath:     filePath,
+		key:          key,
+		auditService: auditService,
 	}
 }
 
@@ -42,6 +46,20 @@ func (h *MetricsHandler) setResponseHash(c *gin.Context, data []byte) {
 	}
 	hash := calculateHash(data, h.key)
 	c.Header("HashSHA256", hash)
+}
+
+func (h *MetricsHandler) sendAudit(c *gin.Context, metrics []string) {
+	if h.auditService == nil {
+		return
+	}
+
+	event := &models.AuditEvent{
+		Timestamp: time.Now().Unix(),
+		Metrics:   metrics,
+		IPAddress: c.ClientIP(),
+	}
+
+	h.auditService.NotifyObservers(event)
 }
 
 func (h *MetricsHandler) UpdateMetricHandler(c *gin.Context) {
@@ -77,6 +95,8 @@ func (h *MetricsHandler) UpdateMetricHandler(c *gin.Context) {
 		}
 	}
 
+	h.sendAudit(c, []string{name})
+
 	c.String(http.StatusOK, "OK")
 }
 
@@ -99,6 +119,8 @@ func (h *MetricsHandler) GetMetricHandler(c *gin.Context) {
 		c.String(http.StatusNotFound, "Not found")
 		return
 	}
+
+	h.sendAudit(c, []string{name})
 
 	c.String(http.StatusOK, value)
 }
@@ -131,6 +153,12 @@ func (h *MetricsHandler) ListMetricsHandler(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "Failed to render template")
 		return
 	}
+
+	metricNames := make([]string, len(metrics))
+	for i, m := range metrics {
+		metricNames[i] = m.ID
+	}
+	h.sendAudit(c, metricNames)
 }
 
 func (h *MetricsHandler) UpdateMetricJSONHandler(c *gin.Context) {
@@ -152,6 +180,8 @@ func (h *MetricsHandler) UpdateMetricJSONHandler(c *gin.Context) {
 		}
 	}
 
+	h.sendAudit(c, []string{m.ID})
+
 	resp := gin.H{"status": "OK"}
 	respData, _ := json.Marshal(resp)
 	h.setResponseHash(c, respData)
@@ -170,6 +200,8 @@ func (h *MetricsHandler) GetMetricJSONHandler(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
+
+	h.sendAudit(c, []string{m.ID})
 
 	respData, _ := json.Marshal(result)
 	h.setResponseHash(c, respData)
@@ -199,6 +231,12 @@ func (h *MetricsHandler) UpdateMetricsBatchHandler(c *gin.Context) {
 			return
 		}
 	}
+
+	metricNames := make([]string, len(metrics))
+	for i, m := range metrics {
+		metricNames[i] = m.ID
+	}
+	h.sendAudit(c, metricNames)
 
 	resp := gin.H{"status": "OK"}
 	respData, _ := json.Marshal(resp)
