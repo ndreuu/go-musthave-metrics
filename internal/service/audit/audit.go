@@ -90,46 +90,43 @@ func (s *AuditService) Close() error {
 
 // FileObserver реализует Observer для записи событий в файл.
 type FileObserver struct {
-	filePath string
-	mu       sync.Mutex
+	file *os.File
+	mu   sync.Mutex
 }
 
 // NewFileObserver создает наблюдателя для записи в файл.
 // filePath - путь к файлу для записи событий аудита.
 func NewFileObserver(filePath string) (*FileObserver, error) {
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-			return nil, fmt.Errorf("failed to create directory for audit file: %w", err)
-		}
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return nil, fmt.Errorf("failed to create directory for audit file: %w", err)
 	}
 
-	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open audit file: %w", err)
 	}
-	f.Close()
 
 	return &FileObserver{
-		filePath: filePath,
+		file: file,
 	}, nil
 }
 
 func (o *FileObserver) Notify(event *models.AuditEvent) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-
 	data, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("failed to marshal audit event: %w", err)
 	}
 
-	f, err := os.OpenFile(o.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open audit file: %w", err)
-	}
-	defer f.Close()
+	o.mu.Lock()
+	defer o.mu.Unlock()
 
-	if _, err := f.WriteString(string(data) + "\n"); err != nil {
+	if o.file == nil {
+		return fmt.Errorf("audit file is closed")
+	}
+
+	data = append(data, '\n')
+
+	if _, err := o.file.Write(data); err != nil {
 		return fmt.Errorf("failed to write audit event to file: %w", err)
 	}
 
@@ -137,9 +134,20 @@ func (o *FileObserver) Notify(event *models.AuditEvent) error {
 }
 
 func (o *FileObserver) Close() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.file == nil {
+		return nil
+	}
+
+	if err := o.file.Close(); err != nil {
+		return fmt.Errorf("failed to close audit file: %w", err)
+	}
+
+	o.file = nil
 	return nil
 }
-
 // URLObserver реализует Observer для отправки событий на URL.
 type URLObserver struct {
 	url    string

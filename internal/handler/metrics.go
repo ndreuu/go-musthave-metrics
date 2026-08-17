@@ -68,7 +68,7 @@ func (h *MetricsHandler) sendAudit(c *gin.Context, metrics []string) {
 		IPAddress: c.ClientIP(),
 	}
 
-	h.auditService.NotifyObservers(event)
+	go h.auditService.NotifyObservers(event)
 }
 
 // UpdateMetricHandler обрабатывает POST-запросы для обновления метрики через URL.

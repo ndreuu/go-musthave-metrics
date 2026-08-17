@@ -43,28 +43,26 @@ func (m *MemStorage) SetGauge(ctx context.Context, name string, value float64) e
 	if name == "" {
 		return fmt.Errorf("metric name cannot be empty")
 	}
-	m.mu.Lock()
-	m.gauges[name] = value
-	m.mu.Unlock()
 
-	if m.filePath != "" {
-		return m.SaveToFile()
-	}
-	return nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.gauges[name] = value
+
+	return m.saveToFileLocked()
 }
 
 func (m *MemStorage) AddCounter(ctx context.Context, name string, value int64) error {
 	if name == "" {
 		return fmt.Errorf("metric name cannot be empty")
 	}
-	m.mu.Lock()
-	m.counters[name] += value
-	m.mu.Unlock()
 
-	if m.filePath != "" {
-		return m.SaveToFile()
-	}
-	return nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.counters[name] += value
+
+	return m.saveToFileLocked()
 }
 
 func (m *MemStorage) GetGauge(ctx context.Context, name string) (float64, error) {
@@ -125,28 +123,18 @@ func (m *MemStorage) saveToFileLocked() error {
 	if m.filePath == "" {
 		return nil
 	}
-	return m.saveToFileUnlocked()
-}
 
-func (m *MemStorage) saveToFileUnlocked() error {
-	return m.saveToFileUnlockedInternal(m.filePath)
-}
-
-func (m *MemStorage) SaveToFile() error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.saveToFileUnlockedInternal(m.filePath)
-}
-
-func (m *MemStorage) saveToFileUnlockedInternal(filePath string) error {
 	metrics := make([]models.Metrics, 0, len(m.gauges)+len(m.counters))
+
 	for name, value := range m.gauges {
+		v := value
 		metrics = append(metrics, models.Metrics{
 			ID:    name,
 			MType: models.Gauge,
-			Value: &value,
+			Value: &v,
 		})
 	}
+
 	for name, value := range m.counters {
 		v := value
 		metrics = append(metrics, models.Metrics{
@@ -161,17 +149,24 @@ func (m *MemStorage) saveToFileUnlockedInternal(filePath string) error {
 		return fmt.Errorf("failed to marshal metrics: %w", err)
 	}
 
-	tmpFile := filePath + ".tmp"
+	tmpFile := m.filePath + ".tmp"
 	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
 
-	if err := os.Rename(tmpFile, filePath); err != nil {
-		os.Remove(tmpFile)
+	if err := os.Rename(tmpFile, m.filePath); err != nil {
+		_ = os.Remove(tmpFile)
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
 	return nil
+}
+
+func (m *MemStorage) SaveToFile() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.saveToFileLocked()
 }
 
 func (m *MemStorage) loadFromFileLocked(filePath string) error {
