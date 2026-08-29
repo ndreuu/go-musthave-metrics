@@ -15,12 +15,16 @@ import (
 	"go-musthave-metrics/pkg/retry"
 )
 
+// Sender отправляет метрики на сервер.
 type Sender struct {
 	serverAddress string
 	client        *http.Client
 	key           string
 }
 
+// NewSender создает новый экземпляр Sender.
+// serverAddress - адрес сервера (например, "http://localhost:8080").
+// key - секретный ключ для вычисления хеша (пустая строка отключает проверку).
 func NewSender(serverAddress string, key string) *Sender {
 	return &Sender{
 		serverAddress: serverAddress,
@@ -36,6 +40,7 @@ func calculateHash(data []byte, key string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// Send отправляет одну метрику на сервер с использованием retry.
 func (s *Sender) Send(metric *Metric) error {
 	return s.sendWithRetry(metric)
 }
@@ -101,6 +106,8 @@ func (s *Sender) sendOnce(metric *Metric, endpoint string) error {
 	return nil
 }
 
+// SendAll отправляет все метрики по отдельности.
+// Возвращает срез ошибок для неудачных отправок.
 func (s *Sender) SendAll(metrics []*Metric) []error {
 	errors := make([]error, 0)
 	for _, metric := range metrics {
@@ -111,6 +118,8 @@ func (s *Sender) SendAll(metrics []*Metric) []error {
 	return errors
 }
 
+// SendBatch отправляет пакет метрик одним запросом.
+// Использует эндпоинт /updates/ для пакетной загрузки.
 func (s *Sender) SendBatch(metrics []*Metric) error {
 	if len(metrics) == 0 {
 		return nil
@@ -179,10 +188,12 @@ func (s *Sender) sendBatchOnce(metrics []*Metric) error {
 	return nil
 }
 
+// MetricGetter определяет интерфейс для получения метрик.
 type MetricGetter interface {
 	GetMetric(name string) *Metric
 }
 
+// SendMetricByName отправляет метрику по имени, получая её из getter.
 func (s *Sender) SendMetricByName(getter MetricGetter, name string) error {
 	metric := getter.GetMetric(name)
 	if metric == nil {
@@ -191,6 +202,8 @@ func (s *Sender) SendMetricByName(getter MetricGetter, name string) error {
 	return s.Send(metric)
 }
 
+// FormatMetricValue форматирует значение метрики в строку.
+// Для counter возвращает целое число, для gauge - число с плавающей точкой.
 func FormatMetricValue(mType string, value float64) string {
 	if mType == "counter" {
 		return strconv.FormatInt(int64(value), 10)

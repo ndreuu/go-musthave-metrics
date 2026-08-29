@@ -1,3 +1,4 @@
+// Package service предоставляет бизнес-логику для работы с метриками.
 package service
 
 import (
@@ -9,6 +10,8 @@ import (
 	models "go-musthave-metrics/internal/model"
 )
 
+// MetricsStorage определяет интерфейс хранилища метрик.
+// Реализуется в памяти (MemStorage) или PostgreSQL (PostgresStorage).
 type MetricsStorage interface {
 	SetGauge(ctx context.Context, name string, value float64) error
 	AddCounter(ctx context.Context, name string, value int64) error
@@ -18,22 +21,29 @@ type MetricsStorage interface {
 	UpdateMetricsBatch(ctx context.Context, metrics []models.Metrics) error
 }
 
+// MetricsService предоставляет бизнес-логику для операций с метриками.
 type MetricsService struct {
 	storage MetricsStorage
 }
 
+// NewMetricsService создает новый экземпляр MetricsService.
+// storage - хранилище метрик, реализующее интерфейс MetricsStorage.
 func NewMetricsService(storage MetricsStorage) *MetricsService {
 	return &MetricsService{
 		storage: storage,
 	}
 }
 
+// UpdateMetricResult представляет результат разбора пути для обновления метрики.
 type UpdateMetricResult struct {
 	MType string
 	Name  string
 	Value string
 }
 
+// ParseUpdatePath разбирает URL путь и извлекает параметры метрики.
+// Ожидает формат: /update/{type}/{name}/{value}
+// Возвращает UpdateMetricResult с типом, именем и значением метрики, или ошибку при неверном формате.
 func (s *MetricsService) ParseUpdatePath(path string) (*UpdateMetricResult, error) {
 	path = strings.Trim(path, "/")
 	parts := strings.Split(path, "/")
@@ -78,6 +88,8 @@ func (s *MetricsService) ParseUpdatePath(path string) (*UpdateMetricResult, erro
 	}, nil
 }
 
+// UpdateMetric обновляет метрику в хранилище на основе разобранных параметров.
+// Для gauge устанавливает значение, для counter добавляет дельту.
 func (s *MetricsService) UpdateMetric(ctx context.Context, result *UpdateMetricResult) error {
 	if result.MType == "gauge" {
 		value, err := strconv.ParseFloat(result.Value, 64)
@@ -95,6 +107,10 @@ func (s *MetricsService) UpdateMetric(ctx context.Context, result *UpdateMetricR
 	return fmt.Errorf("unknown metric type: %s", result.MType)
 }
 
+// GetMetricValue получает значение метрики из хранилища и возвращает его как строку.
+// mType - тип метрики ("gauge" или "counter").
+// name - имя метрики.
+// Возвращает строковое представление значения или ошибку, если метрика не найдена.
 func (s *MetricsService) GetMetricValue(ctx context.Context, mType, name string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("metric name cannot be empty")
@@ -118,10 +134,13 @@ func (s *MetricsService) GetMetricValue(ctx context.Context, mType, name string)
 	}
 }
 
+// GetAllMetrics возвращает все метрики из хранилища.
 func (s *MetricsService) GetAllMetrics() []models.Metrics {
 	return s.storage.GetAll()
 }
 
+// UpdateMetricFromJSON обновляет метрику из JSON объекта.
+// Для gauge ожидает поле Value, для counter - поле Delta.
 func (s *MetricsService) UpdateMetricFromJSON(ctx context.Context, m *models.Metrics) error {
 	if m.ID == "" {
 		return fmt.Errorf("metric ID cannot be empty")
@@ -146,6 +165,9 @@ func (s *MetricsService) UpdateMetricFromJSON(ctx context.Context, m *models.Met
 	}
 }
 
+// GetMetricFromJSON получает метрику из JSON объекта и возвращает её с заполненным значением.
+// Для gauge заполняет поле Value, для counter - поле Delta.
+// Возвращает *models.Metrics с данными из хранилища или ошибку.
 func (s *MetricsService) GetMetricFromJSON(ctx context.Context, m *models.Metrics) (*models.Metrics, error) {
 	if m.ID == "" {
 		return nil, fmt.Errorf("metric ID cannot be empty")
@@ -154,10 +176,7 @@ func (s *MetricsService) GetMetricFromJSON(ctx context.Context, m *models.Metric
 		return nil, fmt.Errorf("metric type cannot be empty")
 	}
 
-	result := &models.Metrics{
-		ID:    m.ID,
-		MType: m.MType,
-	}
+	result := m
 
 	switch m.MType {
 	case models.Gauge:
@@ -166,12 +185,14 @@ func (s *MetricsService) GetMetricFromJSON(ctx context.Context, m *models.Metric
 			return nil, err
 		}
 		result.Value = &value
+		result.Delta = nil
 	case models.Counter:
 		value, err := s.storage.GetCounter(ctx, m.ID)
 		if err != nil {
 			return nil, err
 		}
 		result.Delta = &value
+		result.Value = nil
 	default:
 		return nil, fmt.Errorf("invalid metric type: must be 'gauge' or 'counter'")
 	}
@@ -179,6 +200,8 @@ func (s *MetricsService) GetMetricFromJSON(ctx context.Context, m *models.Metric
 	return result, nil
 }
 
+// UpdateMetricsBatch выполняет пакетное обновление метрик.
+// metrics - срез метрик для обновления.
 func (s *MetricsService) UpdateMetricsBatch(ctx context.Context, metrics []models.Metrics) error {
 	return s.storage.UpdateMetricsBatch(ctx, metrics)
 }

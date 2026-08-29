@@ -7,6 +7,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// RequestLogger возвращает middleware для логирования HTTP запросов.
+// Логирует метод, URI, длительность обработки, статус ответа и размер.
+// logger - экземпляр zap.Logger для записи логов.
 func RequestLogger(logger *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()

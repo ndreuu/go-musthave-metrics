@@ -1,3 +1,4 @@
+// Package repository предоставляет реализации хранилищ для метрик.
 package repository
 
 import (
@@ -10,6 +11,7 @@ import (
 	models "go-musthave-metrics/internal/model"
 )
 
+// MemStorage реализует интерфейс MetricsStorage в памяти с сохранением в файл.
 type MemStorage struct {
 	mu       sync.RWMutex
 	gauges   map[string]float64
@@ -17,6 +19,9 @@ type MemStorage struct {
 	filePath string
 }
 
+// NewMemStorage создает новое хранилище метрик в памяти.
+// filePath - путь к файлу для сохранения метрик (пустая строка отключает сохранение).
+// При создании загружает существующие метрики из файла, если он существует.
 func NewMemStorage(filePath string) *MemStorage {
 	m := &MemStorage{
 		gauges:   make(map[string]float64),
@@ -31,13 +36,19 @@ func NewMemStorage(filePath string) *MemStorage {
 	return m
 }
 
+// SetGauge устанавливает значение gauge метрики.
+// name - имя метрики, value - значение.
+// Сохраняет метрики в файл, если filePath указан.
 func (m *MemStorage) SetGauge(ctx context.Context, name string, value float64) error {
 	if name == "" {
 		return fmt.Errorf("metric name cannot be empty")
 	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.gauges[name] = value
+
 	return m.saveToFileLocked()
 }
 
@@ -45,9 +56,12 @@ func (m *MemStorage) AddCounter(ctx context.Context, name string, value int64) e
 	if name == "" {
 		return fmt.Errorf("metric name cannot be empty")
 	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.counters[name] += value
+
 	return m.saveToFileLocked()
 }
 
@@ -80,7 +94,13 @@ func (m *MemStorage) GetCounter(ctx context.Context, name string) (int64, error)
 func (m *MemStorage) GetAll() []models.Metrics {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	var metrics []models.Metrics
+
+	totalCount := len(m.gauges) + len(m.counters)
+	if totalCount == 0 {
+		return make([]models.Metrics, 0)
+	}
+
+	metrics := make([]models.Metrics, 0, totalCount)
 	for name, value := range m.gauges {
 		metrics = append(metrics, models.Metrics{
 			ID:    name,
@@ -103,28 +123,18 @@ func (m *MemStorage) saveToFileLocked() error {
 	if m.filePath == "" {
 		return nil
 	}
-	return m.saveToFileUnlocked()
-}
 
-func (m *MemStorage) saveToFileUnlocked() error {
-	return m.saveToFileUnlockedInternal(m.filePath)
-}
-
-func (m *MemStorage) SaveToFile() error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.saveToFileUnlockedInternal(m.filePath)
-}
-
-func (m *MemStorage) saveToFileUnlockedInternal(filePath string) error {
 	metrics := make([]models.Metrics, 0, len(m.gauges)+len(m.counters))
+
 	for name, value := range m.gauges {
+		v := value
 		metrics = append(metrics, models.Metrics{
 			ID:    name,
 			MType: models.Gauge,
-			Value: &value,
+			Value: &v,
 		})
 	}
+
 	for name, value := range m.counters {
 		v := value
 		metrics = append(metrics, models.Metrics{
@@ -139,17 +149,24 @@ func (m *MemStorage) saveToFileUnlockedInternal(filePath string) error {
 		return fmt.Errorf("failed to marshal metrics: %w", err)
 	}
 
-	tmpFile := filePath + ".tmp"
+	tmpFile := m.filePath + ".tmp"
 	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
 
-	if err := os.Rename(tmpFile, filePath); err != nil {
-		os.Remove(tmpFile)
+	if err := os.Rename(tmpFile, m.filePath); err != nil {
+		_ = os.Remove(tmpFile)
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
 	return nil
+}
+
+func (m *MemStorage) SaveToFile() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.saveToFileLocked()
 }
 
 func (m *MemStorage) loadFromFileLocked(filePath string) error {

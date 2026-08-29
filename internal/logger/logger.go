@@ -20,4 +20,3 @@ func NewLogger(level string) (*zap.Logger, error) {
 
 	return zl, nil
 }
-

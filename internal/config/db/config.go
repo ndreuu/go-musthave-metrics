@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// Config представляет конфигурацию подключения к базе данных.
 type Config struct {
 	DSN string
 
@@ -15,6 +16,7 @@ type Config struct {
 	ConnMaxIdleTime time.Duration
 }
 
+// NewConfig создает конфигурацию с параметрами по умолчанию.
 func NewConfig() *Config {
 	return &Config{
 		MaxOpenConns:    25,
@@ -24,18 +26,22 @@ func NewConfig() *Config {
 	}
 }
 
+// LoadFromEnv загружает DSN из переменной окружения DATABASE_DSN.
 func (c *Config) LoadFromEnv() {
 	if dsn := os.Getenv("DATABASE_DSN"); dsn != "" {
 		c.DSN = dsn
 	}
 }
 
+// LoadFromFlags загружает DSN из аргументов командной строки.
 func (c *Config) LoadFromFlags(dsn string) {
 	if dsn != "" {
 		c.DSN = dsn
 	}
 }
 
+// Validate проверяет корректность конфигурации.
+// Возвращает ошибку, если DSN не указан.
 func (c *Config) Validate() error {
 	if c.DSN == "" {
 		return fmt.Errorf("database DSN is required")

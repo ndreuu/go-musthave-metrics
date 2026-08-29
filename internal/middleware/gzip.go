@@ -8,6 +8,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Gzip возвращает middleware для сжатия ответов gzip.
+// Сжимает ответы с Content-Type: application/json или text/html.
+// Добавляет заголовок Content-Encoding: gzip при сжатии.
 func Gzip() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		acceptEncoding := c.GetHeader("Accept-Encoding")
@@ -72,6 +75,9 @@ func (w *gzipResponseWriter) WriteHeader(statusCode int) {
 	w.statusCode = statusCode
 }
 
+// GzipUnmarshal возвращает middleware для распаковки gzip запросов.
+// Распаковывает тело запроса, если заголовок Content-Encoding: gzip.
+// Возвращает ошибку 400 при некорректных gzip данных.
 func GzipUnmarshal() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		contentEncoding := c.GetHeader("Content-Encoding")
