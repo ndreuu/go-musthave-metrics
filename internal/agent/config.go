@@ -9,10 +9,10 @@ import (
 )
 
 type Config struct {
-	PollInterval   time.Duration
-	ReportInterval time.Duration
 	ServerAddress  string
 	Key            string
+	PollInterval   time.Duration
+	ReportInterval time.Duration
 	RateLimit      int
 }
 

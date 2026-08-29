@@ -22,10 +22,10 @@ type Metric struct {
 
 // Collector собирает метрики Go runtime и системы.
 type Collector struct {
-	mu         sync.RWMutex
 	metrics    map[string]*Metric
-	pollCount  int64
 	randSource *rand.Rand
+	pollCount  int64
+	mu         sync.RWMutex
 }
 
 // NewCollector создает новый экземпляр Collector.

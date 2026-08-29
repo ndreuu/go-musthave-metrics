@@ -115,7 +115,7 @@ func TestMetricsHandler_UpdateMetricHandler_EmptyName(t *testing.T) {
 
 func TestMetricsHandler_GetMetricHandler_Success_Gauge(t *testing.T) {
 	storage := repository.NewMemStorage("")
-	storage.SetGauge(context.Background(), "TestGauge", 123.456)
+	_ = storage.SetGauge(context.Background(), "TestGauge", 123.456)
 	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/value/gauge/TestGauge", nil)
@@ -134,7 +134,7 @@ func TestMetricsHandler_GetMetricHandler_Success_Gauge(t *testing.T) {
 
 func TestMetricsHandler_GetMetricHandler_Success_Counter(t *testing.T) {
 	storage := repository.NewMemStorage("")
-	storage.AddCounter(context.Background(), "TestCounter", 42)
+	_ = storage.AddCounter(context.Background(), "TestCounter", 42)
 	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/value/counter/TestCounter", nil)
@@ -199,8 +199,8 @@ func TestMetricsHandler_ListMetricsHandler_Empty(t *testing.T) {
 
 func TestMetricsHandler_ListMetricsHandler_WithMetrics(t *testing.T) {
 	storage := repository.NewMemStorage("")
-	storage.SetGauge(context.Background(), "TestGauge", 100.5)
-	storage.AddCounter(context.Background(), "TestCounter", 50)
+	_ = storage.SetGauge(context.Background(), "TestGauge", 100.5)
+	_ = storage.AddCounter(context.Background(), "TestCounter", 50)
 	r := setupTestRouter(storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -329,6 +329,57 @@ func TestMetricsHandler_UpdateMetricsBatchHandler_EmptyBatch(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+func TestMetricsHandler_UpdateMetricJSONHandler_WithKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	storage := repository.NewMemStorage("")
+	metricsService := service.NewMetricsService(storage)
+	auditService := audit.NewAuditService()
+	handler := NewMetricsHandler(metricsService, storage, "", "secret-key", auditService)
+
+	r := gin.New()
+	r.POST("/update/", handler.UpdateMetricJSONHandler)
+
+	body := `{"id":"HashedGauge","type":"gauge","value":3.14}`
+	req := httptest.NewRequest(http.MethodPost, "/update/", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+	if w.Header().Get("HashSHA256") == "" {
+		t.Error("Expected HashSHA256 header to be set")
+	}
+}
+
+func TestMetricsHandler_GetMetricJSONHandler_WithKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	storage := repository.NewMemStorage("")
+	_ = storage.SetGauge(context.Background(), "HashedGauge", 3.14)
+	metricsService := service.NewMetricsService(storage)
+	auditService := audit.NewAuditService()
+	handler := NewMetricsHandler(metricsService, storage, "", "secret-key", auditService)
+
+	r := gin.New()
+	r.POST("/value/", handler.GetMetricJSONHandler)
+
+	body := `{"id":"HashedGauge","type":"gauge"}`
+	req := httptest.NewRequest(http.MethodPost, "/value/", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+	if w.Header().Get("HashSHA256") == "" {
+		t.Error("Expected HashSHA256 header to be set")
 	}
 }
 
