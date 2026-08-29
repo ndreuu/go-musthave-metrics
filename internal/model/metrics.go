@@ -10,6 +10,8 @@ const (
 
 // Metrics представляет метрику с именем, типом и значением.
 // Delta и Value объявлены через указатели, чтобы отличать значение "0" от незаданного значения.
+//
+// generate:reset
 type Metrics struct {
 	ID    string   `json:"id"`
 	MType string   `json:"type"`

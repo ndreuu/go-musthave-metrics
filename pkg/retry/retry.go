@@ -15,8 +15,8 @@ import (
 var ErrRetryExhausted = errors.New("all retry attempts exhausted")
 
 type Config struct {
-	MaxAttempts int
 	Backoff     []time.Duration
+	MaxAttempts int
 }
 
 func DefaultConfig() Config {

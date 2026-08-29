@@ -35,7 +35,7 @@ var (
 	filePathSet       bool
 )
 
-func parseFlags() {
+func parseFlags() error {
 	flag.StringVar(&flagRunAddr, "a", ":8080", "address and port to run server")
 	flag.StringVar(&flagLogLevel, "l", "info", "log level")
 	flag.IntVar(&flagStoreInterval, "i", 300, "store interval in seconds")
@@ -62,8 +62,7 @@ func parseFlags() {
 	if envInterval, ok := os.LookupEnv("STORE_INTERVAL"); ok && envInterval != "" {
 		v, err := strconv.Atoi(envInterval)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Invalid STORE_INTERVAL value: %s\n", envInterval)
-			os.Exit(1)
+			return fmt.Errorf("invalid STORE_INTERVAL value: %s", envInterval)
 		}
 		flagStoreInterval = v
 	}
@@ -83,17 +82,24 @@ func parseFlags() {
 	if envAuditURL, ok := os.LookupEnv("AUDIT_URL"); ok && envAuditURL != "" {
 		flagAuditURL = envAuditURL
 	}
+
+	return nil
 }
 
 func main() {
-	parseFlags()
+	if err := parseFlags(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		return
+	}
 
 	log, err := logger.NewLogger(flagLogLevel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
-		os.Exit(1)
+		return
 	}
-	defer log.Sync()
+	defer func() {
+		_ = log.Sync()
+	}()
 
 	dbConfig := db.NewConfig()
 	dbConfig.LoadFromEnv()
@@ -237,7 +243,9 @@ func main() {
 	}
 
 	if dbConn != nil {
-		dbConn.Close()
+		if err := dbConn.Close(); err != nil {
+			log.Error("Failed to close database connection", zap.Error(err))
+		}
 	}
 
 	log.Info("Server stopped")

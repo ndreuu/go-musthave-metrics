@@ -32,21 +32,21 @@ func TestDefaultConfig(t *testing.T) {
 
 func TestIsRetriableError(t *testing.T) {
 	tests := []struct {
-		name     string
 		err      error
+		name     string
 		expected bool
 	}{
-		{"nil error", nil, false},
-		{"context canceled", context.Canceled, false},
-		{"context deadline exceeded", context.DeadlineExceeded, false},
-		{"EOF error", io.EOF, true},
-		{"connection refused", errors.New("connection refused"), true},
-		{"connection reset", errors.New("connection reset"), true},
-		{"broken pipe", errors.New("broken pipe"), true},
-		{"no connection", errors.New("no connection"), true},
-		{"i/o timeout", errors.New("i/o timeout"), true},
-		{"unexpected EOF", errors.New("unexpected EOF"), true},
-		{"permanent error", errors.New("permanent error"), false},
+		{nil, "nil error", false},
+		{context.Canceled, "context canceled", false},
+		{context.DeadlineExceeded, "context deadline exceeded", false},
+		{io.EOF, "EOF error", true},
+		{errors.New("connection refused"), "connection refused", true},
+		{errors.New("connection reset"), "connection reset", true},
+		{errors.New("broken pipe"), "broken pipe", true},
+		{errors.New("no connection"), "no connection", true},
+		{errors.New("i/o timeout"), "i/o timeout", true},
+		{errors.New("unexpected EOF"), "unexpected EOF", true},
+		{errors.New("permanent error"), "permanent error", false},
 	}
 
 	for _, tt := range tests {
@@ -61,18 +61,18 @@ func TestIsRetriableError(t *testing.T) {
 
 func TestIsRetriableDBError(t *testing.T) {
 	tests := []struct {
-		name     string
 		err      error
+		name     string
 		expected bool
 	}{
-		{"nil error", nil, false},
-		{"Class 08 - Connection Exception", &pgconn.PgError{Code: "08000"}, true},
-		{"Class 08 - Connection Does Not Exist", &pgconn.PgError{Code: "08003"}, true},
-		{"Class 08 - Connection Failure", &pgconn.PgError{Code: "08006"}, true},
-		{"Class 08 - Client Unable To Establish Connection", &pgconn.PgError{Code: "08001"}, true},
-		{"Class 23 - Unique Violation", &pgconn.PgError{Code: "23505"}, false},
-		{"Class 40 - Transaction Rollback", &pgconn.PgError{Code: "40001"}, false},
-		{"non-pg error", errors.New("some error"), false},
+		{nil, "nil error", false},
+		{&pgconn.PgError{Code: "08000"}, "Class 08 - Connection Exception", true},
+		{&pgconn.PgError{Code: "08003"}, "Class 08 - Connection Does Not Exist", true},
+		{&pgconn.PgError{Code: "08006"}, "Class 08 - Connection Failure", true},
+		{&pgconn.PgError{Code: "08001"}, "Class 08 - Client Unable To Establish Connection", true},
+		{&pgconn.PgError{Code: "23505"}, "Class 23 - Unique Violation", false},
+		{&pgconn.PgError{Code: "40001"}, "Class 40 - Transaction Rollback", false},
+		{errors.New("some error"), "non-pg error", false},
 	}
 
 	for _, tt := range tests {
