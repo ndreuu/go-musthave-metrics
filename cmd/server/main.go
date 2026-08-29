@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"go-musthave-metrics/internal/config/db"
 	"go-musthave-metrics/internal/handler"
 	"go-musthave-metrics/internal/logger"
@@ -19,7 +18,15 @@ import (
 	"go-musthave-metrics/internal/repository"
 	"go-musthave-metrics/internal/service"
 	"go-musthave-metrics/internal/service/audit"
+
+	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+)
+
+var (
+	buildVersion string
+	buildDate    string
+	buildCommit  string
 )
 
 var (
@@ -86,7 +93,28 @@ func parseFlags() error {
 	return nil
 }
 
+func printBuildInfo() {
+	version := buildVersion
+	if version == "" {
+		version = "N/A"
+	}
+	date := buildDate
+	if date == "" {
+		date = "N/A"
+	}
+	commit := buildCommit
+	if commit == "" {
+		commit = "N/A"
+	}
+
+	fmt.Printf("Build version: %s\n", version)
+	fmt.Printf("Build date: %s\n", date)
+	fmt.Printf("Build commit: %s\n", commit)
+}
+
 func main() {
+	printBuildInfo()
+
 	if err := parseFlags(); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
 		return
