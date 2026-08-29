@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	models "go-musthave-metrics/internal/model"
 )
 
 func TestNewMemStorage(t *testing.T) {
@@ -173,11 +175,11 @@ func TestMemStorage_GetCounter_EmptyName(t *testing.T) {
 func TestMemStorage_GetAll(t *testing.T) {
 	storage := NewMemStorage("")
 
-	storage.SetGauge(context.Background(), "Gauge1", 1.0)
-	storage.SetGauge(context.Background(), "Gauge2", 2.0)
+	_ = storage.SetGauge(context.Background(), "Gauge1", 1.0)
+	_ = storage.SetGauge(context.Background(), "Gauge2", 2.0)
 
-	storage.AddCounter(context.Background(), "Counter1", 10)
-	storage.AddCounter(context.Background(), "Counter2", 20)
+	_ = storage.AddCounter(context.Background(), "Counter1", 10)
+	_ = storage.AddCounter(context.Background(), "Counter2", 20)
 
 	metrics := storage.GetAll()
 
@@ -216,8 +218,8 @@ func TestMemStorage_Concurrency(t *testing.T) {
 		go func(id int) {
 			ctx := context.Background()
 			for j := 0; j < 100; j++ {
-				storage.SetGauge(ctx, "Gauge"+string(rune(id)), float64(j))
-				storage.AddCounter(ctx, "Counter"+string(rune(id)), int64(j))
+				_ = storage.SetGauge(ctx, "Gauge"+string(rune(id)), float64(j))
+				_ = storage.AddCounter(ctx, "Counter"+string(rune(id)), int64(j))
 				storage.GetAll()
 			}
 			done <- true
@@ -231,10 +233,10 @@ func TestMemStorage_Concurrency(t *testing.T) {
 
 func TestMemStorage_SaveToFile(t *testing.T) {
 	storage := NewMemStorage("test_metrics.json")
-	defer os.Remove("test_metrics.json")
+	defer func() { _ = os.Remove("test_metrics.json") }()
 
-	storage.SetGauge(context.Background(), "TestGauge", 123.456)
-	storage.AddCounter(context.Background(), "TestCounter", 42)
+	_ = storage.SetGauge(context.Background(), "TestGauge", 123.456)
+	_ = storage.AddCounter(context.Background(), "TestCounter", 42)
 
 	err := storage.SaveToFile()
 	if err != nil {
@@ -260,7 +262,7 @@ func TestMemStorage_SaveToFile(t *testing.T) {
 
 func TestMemStorage_LoadFromFile(t *testing.T) {
 	tmpFile := "test_metrics_load.json"
-	defer os.Remove(tmpFile)
+	defer func() { _ = os.Remove(tmpFile) }()
 
 	testData := `[
 		{"id": "LoadedGauge", "type": "gauge", "value": 999.999},
@@ -301,12 +303,12 @@ func TestMemStorage_LoadFromFile_NotExist(t *testing.T) {
 
 func TestMemStorage_SaveAndLoad_RoundTrip(t *testing.T) {
 	storage := NewMemStorage("test_roundtrip.json")
-	defer os.Remove("test_roundtrip.json")
+	defer func() { _ = os.Remove("test_roundtrip.json") }()
 
-	storage.SetGauge(context.Background(), "Gauge1", 1.5)
-	storage.SetGauge(context.Background(), "Gauge2", 2.5)
-	storage.AddCounter(context.Background(), "Counter1", 100)
-	storage.AddCounter(context.Background(), "Counter2", 200)
+	_ = storage.SetGauge(context.Background(), "Gauge1", 1.5)
+	_ = storage.SetGauge(context.Background(), "Gauge2", 2.5)
+	_ = storage.AddCounter(context.Background(), "Counter1", 100)
+	_ = storage.AddCounter(context.Background(), "Counter2", 200)
 
 	err := storage.SaveToFile()
 	if err != nil {
@@ -333,5 +335,104 @@ func TestMemStorage_SaveAndLoad_RoundTrip(t *testing.T) {
 	c2, _ := newStorage.GetCounter(context.Background(), "Counter2")
 	if c2 != 200 {
 		t.Errorf("Expected Counter2=200, got %d", c2)
+	}
+}
+
+func TestMemStorage_UpdateMetricsBatch(t *testing.T) {
+	storage := NewMemStorage("")
+
+	value := 1.5
+	delta := int64(10)
+	metrics := []models.Metrics{
+		{ID: "Gauge", MType: models.Gauge, Value: &value},
+		{ID: "Counter", MType: models.Counter, Delta: &delta},
+	}
+
+	err := storage.UpdateMetricsBatch(context.Background(), metrics)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	g, err := storage.GetGauge(context.Background(), "Gauge")
+	if err != nil {
+		t.Fatalf("GetGauge: %v", err)
+	}
+	if g != 1.5 {
+		t.Errorf("Expected gauge 1.5, got %f", g)
+	}
+
+	c, err := storage.GetCounter(context.Background(), "Counter")
+	if err != nil {
+		t.Fatalf("GetCounter: %v", err)
+	}
+	if c != 10 {
+		t.Errorf("Expected counter 10, got %d", c)
+	}
+}
+
+func TestMemStorage_UpdateMetricsBatch_Empty(t *testing.T) {
+	storage := NewMemStorage("")
+
+	err := storage.UpdateMetricsBatch(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Expected no error for empty batch, got %v", err)
+	}
+}
+
+func TestMemStorage_UpdateMetricsBatch_NilFields(t *testing.T) {
+	storage := NewMemStorage("")
+
+	metrics := []models.Metrics{
+		{ID: "GaugeNoValue", MType: models.Gauge},
+		{ID: "CounterNoDelta", MType: models.Counter},
+		{ID: "Unknown", MType: "histogram"},
+	}
+
+	err := storage.UpdateMetricsBatch(context.Background(), metrics)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if len(storage.GetAll()) != 0 {
+		t.Errorf("Expected no metrics stored for nil fields, got %d", len(storage.GetAll()))
+	}
+}
+
+func TestMemStorage_SaveToFile_NoFilePath(t *testing.T) {
+	storage := NewMemStorage("")
+	err := storage.SaveToFile()
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+}
+
+func TestMemStorage_SetGauge_NoFilePath(t *testing.T) {
+	storage := NewMemStorage("")
+	err := storage.SetGauge(context.Background(), "Gauge", 1.0)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+}
+
+func TestMemStorage_AddCounter_NoFilePath(t *testing.T) {
+	storage := NewMemStorage("")
+	err := storage.AddCounter(context.Background(), "Counter", 1)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+}
+
+func TestMemStorage_LoadFromFile_Corrupt(t *testing.T) {
+	tmpFile := "test_corrupt.json"
+	defer func() { _ = os.Remove(tmpFile) }()
+
+	err := os.WriteFile(tmpFile, []byte("not-json{{{"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	storage := NewMemStorage(tmpFile)
+	if storage == nil {
+		t.Fatal("Expected storage to be non-nil even on corrupt file")
 	}
 }
