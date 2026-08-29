@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -58,6 +59,13 @@ func TestDB_Close(t *testing.T) {
 	var db *DB
 	err := db.Close()
 	assert.NoError(t, err)
+}
+
+func TestDB_Ping_Nil(t *testing.T) {
+	var db *DB
+	err := db.Ping(context.Background())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "database is not configured")
 }
 
 func TestDB_ConcurrentPing(t *testing.T) {

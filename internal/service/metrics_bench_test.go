@@ -31,8 +31,8 @@ func BenchmarkMetricsService_GetMetricValue(b *testing.B) {
 	service := NewMetricsService(storage)
 	ctx := context.Background()
 
-	storage.SetGauge(ctx, "test_gauge", 123.456)
-	storage.AddCounter(ctx, "test_counter", 100)
+	_ = storage.SetGauge(ctx, "test_gauge", 123.456)
+	_ = storage.AddCounter(ctx, "test_counter", 100)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -51,8 +51,8 @@ func BenchmarkMetricsService_GetAllMetrics(b *testing.B) {
 	ctx := context.Background()
 
 	for i := 0; i < 100; i++ {
-		storage.SetGauge(ctx, fmt.Sprintf("gauge_%d", i), float64(i))
-		storage.AddCounter(ctx, fmt.Sprintf("counter_%d", i), int64(i))
+		_ = storage.SetGauge(ctx, fmt.Sprintf("gauge_%d", i), float64(i))
+		_ = storage.AddCounter(ctx, fmt.Sprintf("counter_%d", i), int64(i))
 	}
 
 	b.ReportAllocs()
@@ -101,8 +101,8 @@ func BenchmarkMetricsService_GetMetricFromJSON(b *testing.B) {
 	service := NewMetricsService(storage)
 	ctx := context.Background()
 
-	storage.SetGauge(ctx, "test_gauge", 123.456)
-	storage.AddCounter(ctx, "test_counter", 100)
+	_ = storage.SetGauge(ctx, "test_gauge", 123.456)
+	_ = storage.AddCounter(ctx, "test_counter", 100)
 
 	b.ReportAllocs()
 	b.Run("Gauge", func(b *testing.B) {

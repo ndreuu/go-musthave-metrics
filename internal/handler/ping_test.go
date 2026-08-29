@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -33,7 +35,7 @@ func TestPingHandler_WithDB(t *testing.T) {
 	if err != nil {
 		t.Skip("PostgreSQL not available, skipping test")
 	}
-	defer storage.Close()
+	defer func() { _ = storage.Close() }()
 
 	handler := NewPingHandler(storage)
 
@@ -45,4 +47,25 @@ func TestPingHandler_WithDB(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "ok")
+}
+
+type failingPinger struct{}
+
+func (failingPinger) Ping(ctx context.Context) error {
+	return errors.New("db unreachable")
+}
+
+func TestPingHandler_PingError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler := NewPingHandler(failingPinger{})
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/ping", nil)
+
+	handler.PingHandler(c)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "database connection failed")
 }

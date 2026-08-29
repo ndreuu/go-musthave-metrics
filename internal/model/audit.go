@@ -2,7 +2,7 @@ package models
 
 // AuditEvent представляет событие аудита для логирования запросов.
 type AuditEvent struct {
-	Timestamp int64    `json:"ts"`
-	Metrics   []string `json:"metrics"`
 	IPAddress string   `json:"ip_address"`
+	Metrics   []string `json:"metrics"`
+	Timestamp int64    `json:"ts"`
 }

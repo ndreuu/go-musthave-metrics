@@ -1,0 +1,23 @@
+// Errcheck exclude file for the go-musthave-metrics project.
+//
+// Only genuinely safe cleanup calls are listed here: operations whose errors
+// cannot reasonably be acted upon (closing HTTP response bodies, gzip
+// streams, files, database rows, transactions and the logger). Ignored
+// errors from other sources must be handled explicitly in the code.
+
+(*net/http.Response).Body.Close
+(*net/http.Response).Close
+(io.ReadCloser).Close
+(*io.ReadCloser).Close
+(io.Closer).Close
+(*io.Closer).Close
+(*compress/gzip.Writer).Close
+(*compress/gzip.Reader).Close
+(*compress/gzip.Writer).Write
+(*os.File).Close
+(*os.File).Sync
+(*zap.Logger).Sync
+(*net/http.Client).CloseIdleConnections
+(*database/sql.Rows).Close
+(*database/sql.Tx).Rollback
+(*sql.Tx).Rollback

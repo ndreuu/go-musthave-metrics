@@ -75,10 +75,10 @@ func (s *Sender) sendOnce(metric *Metric, endpoint string) error {
 
 	buf := &bytes.Buffer{}
 	gzWriter := gzip.NewWriter(buf)
-	if _, err := gzWriter.Write(jsonData); err != nil {
+	if _, err = gzWriter.Write(jsonData); err != nil {
 		return fmt.Errorf("failed to compress data: %w", err)
 	}
-	if err := gzWriter.Close(); err != nil {
+	if err = gzWriter.Close(); err != nil {
 		return fmt.Errorf("failed to close gzip writer: %w", err)
 	}
 
@@ -157,10 +157,10 @@ func (s *Sender) sendBatchOnce(metrics []*Metric) error {
 
 	buf := &bytes.Buffer{}
 	gzWriter := gzip.NewWriter(buf)
-	if _, err := gzWriter.Write(jsonData); err != nil {
+	if _, err = gzWriter.Write(jsonData); err != nil {
 		return fmt.Errorf("failed to compress data: %w", err)
 	}
-	if err := gzWriter.Close(); err != nil {
+	if err = gzWriter.Close(); err != nil {
 		return fmt.Errorf("failed to close gzip writer: %w", err)
 	}
 
