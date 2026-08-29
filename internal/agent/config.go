@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+// generate:reset
 type Config struct {
 	ServerAddress  string
 	Key            string

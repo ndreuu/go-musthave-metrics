@@ -14,6 +14,8 @@ import (
 )
 
 // Metric представляет отдельную метрику с именем, типом и значением.
+//
+// generate:reset
 type Metric struct {
 	MType string
 	Name  string
@@ -21,6 +23,8 @@ type Metric struct {
 }
 
 // Collector собирает метрики Go runtime и системы.
+//
+// generate:reset
 type Collector struct {
 	metrics    map[string]*Metric
 	randSource *rand.Rand

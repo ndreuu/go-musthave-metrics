@@ -7,6 +7,8 @@ import (
 )
 
 // Config представляет конфигурацию подключения к базе данных.
+//
+// generate:reset
 type Config struct {
 	DSN string
 

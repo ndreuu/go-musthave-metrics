@@ -1,6 +1,8 @@
 package models
 
 // AuditEvent представляет событие аудита для логирования запросов.
+//
+// generate:reset
 type AuditEvent struct {
 	IPAddress string   `json:"ip_address"`
 	Metrics   []string `json:"metrics"`
