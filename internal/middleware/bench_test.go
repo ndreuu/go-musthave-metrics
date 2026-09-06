@@ -68,8 +68,14 @@ func BenchmarkGzipUnmarshal(b *testing.B) {
 
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
-	gz.Write(data)
-	gz.Close()
+	if _, err := gz.Write(data); err != nil {
+		b.Fatal(err)
+	}
+
+	if err := gz.Close(); err != nil {
+		b.Fatal(err)
+	}
+
 	compressedData := buf.Bytes()
 
 	b.ReportAllocs()

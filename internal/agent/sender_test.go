@@ -271,14 +271,14 @@ func TestFormatMetricValue(t *testing.T) {
 	tests := []struct {
 		name     string
 		mType    string
-		value    float64
 		expected string
+		value    float64
 	}{
-		{"counter integer", "counter", 42, "42"},
-		{"counter large", "counter", 1000000, "1000000"},
-		{"gauge integer", "gauge", 100, "100"},
-		{"gauge float", "gauge", 123.456, "123.456"},
-		{"gauge small", "gauge", 0.001, "0.001"},
+		{"counter integer", "counter", "42", 42},
+		{"counter large", "counter", "1000000", 1000000},
+		{"gauge integer", "gauge", "100", 100},
+		{"gauge float", "gauge", "123.456", 123.456},
+		{"gauge small", "gauge", "0.001", 0.001},
 	}
 
 	for _, tt := range tests {
@@ -353,6 +353,33 @@ func TestSender_SendBatch_Empty(t *testing.T) {
 	err := sender.SendBatch(metrics)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, requestCount)
+}
+
+func TestSender_Send_WithKey_SetsHashHeader(t *testing.T) {
+	var receivedHash string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHash = r.Header.Get("HashSHA256")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	sender := NewSender(server.URL, "secret-key")
+
+	metric := &Metric{
+		MType: "gauge",
+		Name:  "TestMetric",
+		Value: 123.456,
+	}
+
+	err := sender.Send(metric)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if receivedHash == "" {
+		t.Error("Expected HashSHA256 header to be set when key is configured")
+	}
 }
 
 func TestSender_SendBatch_ServerError(t *testing.T) {

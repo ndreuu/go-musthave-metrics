@@ -1,0 +1,13 @@
+// Errcheck exclude file for the go-musthave-metrics project.
+//
+// Only cleanup operations whose errors are intentionally ignored are listed
+// here. Errors from other operations must be handled explicitly.
+
+(io.ReadCloser).Close
+(io.Closer).Close
+(*compress/gzip.Writer).Close
+(*compress/gzip.Reader).Close
+(*os.File).Close
+(*go.uber.org/zap.Logger).Sync
+(*database/sql.Rows).Close
+(*database/sql.Tx).Rollback

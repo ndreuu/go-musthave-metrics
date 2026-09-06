@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"go-musthave-metrics/internal/buildinfo"
 	"go-musthave-metrics/internal/config/db"
 	"go-musthave-metrics/internal/handler"
 	"go-musthave-metrics/internal/logger"
@@ -19,6 +19,8 @@ import (
 	"go-musthave-metrics/internal/repository"
 	"go-musthave-metrics/internal/service"
 	"go-musthave-metrics/internal/service/audit"
+
+	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
@@ -35,7 +37,7 @@ var (
 	filePathSet       bool
 )
 
-func parseFlags() {
+func parseFlags() error {
 	flag.StringVar(&flagRunAddr, "a", ":8080", "address and port to run server")
 	flag.StringVar(&flagLogLevel, "l", "info", "log level")
 	flag.IntVar(&flagStoreInterval, "i", 300, "store interval in seconds")
@@ -62,8 +64,7 @@ func parseFlags() {
 	if envInterval, ok := os.LookupEnv("STORE_INTERVAL"); ok && envInterval != "" {
 		v, err := strconv.Atoi(envInterval)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Invalid STORE_INTERVAL value: %s\n", envInterval)
-			os.Exit(1)
+			return fmt.Errorf("invalid STORE_INTERVAL value: %s", envInterval)
 		}
 		flagStoreInterval = v
 	}
@@ -83,17 +84,26 @@ func parseFlags() {
 	if envAuditURL, ok := os.LookupEnv("AUDIT_URL"); ok && envAuditURL != "" {
 		flagAuditURL = envAuditURL
 	}
+
+	return nil
 }
 
 func main() {
-	parseFlags()
+	buildinfo.Print()
+
+	if err := parseFlags(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		return
+	}
 
 	log, err := logger.NewLogger(flagLogLevel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
-		os.Exit(1)
+		return
 	}
-	defer log.Sync()
+	defer func() {
+		_ = log.Sync()
+	}()
 
 	dbConfig := db.NewConfig()
 	dbConfig.LoadFromEnv()
@@ -143,7 +153,14 @@ func main() {
 	if flagStoreInterval == 0 && flagFilePath != "" && dbConn == nil {
 		syncFilePath = flagFilePath
 	}
-	metricsHandler := handler.NewMetricsHandler(metricsService, storage, syncFilePath, flagKey, auditService)
+
+	metricsHandler := handler.NewMetricsHandler(
+		metricsService,
+		storage,
+		syncFilePath,
+		flagKey,
+		auditService,
+	)
 
 	var pingHandler *handler.PingHandler
 	if dbConn != nil {
@@ -184,16 +201,27 @@ func main() {
 
 	if flagStoreInterval > 0 && flagFilePath != "" && dbConn == nil {
 		go func(ctx context.Context) {
-			ticker := time.NewTicker(time.Duration(flagStoreInterval) * time.Second)
+			ticker := time.NewTicker(
+				time.Duration(flagStoreInterval) * time.Second,
+			)
 			defer ticker.Stop()
+
 			for {
 				select {
 				case <-ticker.C:
 					if err := storage.(*repository.MemStorage).SaveToFile(); err != nil {
-						log.Error("Failed to save metrics to file", zap.String("file", flagFilePath), zap.Error(err))
+						log.Error(
+							"Failed to save metrics to file",
+							zap.String("file", flagFilePath),
+							zap.Error(err),
+						)
 					} else {
-						log.Info("Metrics saved to file", zap.String("file", flagFilePath))
+						log.Info(
+							"Metrics saved to file",
+							zap.String("file", flagFilePath),
+						)
 					}
+
 				case <-ctx.Done():
 					log.Info("Store ticker stopped")
 					return
@@ -221,7 +249,10 @@ func main() {
 
 	log.Info("Shutting down server...")
 
-	ctxShutdown, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	ctxShutdown, cancelShutdown := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
 	defer cancelShutdown()
 
 	if err := server.Shutdown(ctxShutdown); err != nil {
@@ -230,14 +261,14 @@ func main() {
 
 	cancel()
 
-	if auditService != nil {
-		if err := auditService.Close(); err != nil {
-			log.Error("Failed to close audit service", zap.Error(err))
-		}
+	if err := auditService.Close(); err != nil {
+		log.Error("Failed to close audit service", zap.Error(err))
 	}
 
 	if dbConn != nil {
-		dbConn.Close()
+		if err := dbConn.Close(); err != nil {
+			log.Error("Failed to close database connection", zap.Error(err))
+		}
 	}
 
 	log.Info("Server stopped")

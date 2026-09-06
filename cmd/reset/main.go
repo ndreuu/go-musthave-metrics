@@ -1,0 +1,337 @@
+// Command reset генерирует методы Reset() для структур, помеченных
+// комментарием // generate:reset.
+//
+// Запуск из корня проекта:
+//
+//	go run ./cmd/reset
+//
+// Утилита сканирует все пакеты, начиная с корневой директории (или
+// директории, переданной аргументом), находит структуры, над которыми
+// стоит комментарий // generate:reset, и для каждой такой структуры
+// генерирует метод Reset(), сбрасывающий состояние к начальным значениям.
+// Сгенерированные методы для структур одного пакета помещаются в файл
+// reset.gen.go соответствующего пакета.
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"go/ast"
+	"go/format"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+var basicTypes = map[string]string{
+	"bool": "false", "string": `""`,
+	"int": "0", "int8": "0", "int16": "0", "int32": "0", "int64": "0",
+	"uint": "0", "uint8": "0", "uint16": "0", "uint32": "0", "uint64": "0",
+	"uintptr": "0", "byte": "0", "rune": "0",
+	"float32": "0", "float64": "0",
+	"complex64": "0", "complex128": "0",
+}
+
+type pkgInfo struct {
+	name        string
+	dir         string
+	structs     map[string]*ast.StructType
+	hasReset    map[string]bool
+	markedNames map[string]bool
+	marked      []*ast.TypeSpec
+}
+
+func main() {
+	root := "."
+	if len(os.Args) > 1 {
+		root = os.Args[1]
+	}
+	if err := run(root); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run(root string) error {
+	var dirs []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if path != root && (name == "vendor" || name == "testdata" ||
+			name == "node_modules" || strings.HasPrefix(name, ".")) {
+			return filepath.SkipDir
+		}
+		dirs = append(dirs, path)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	var generated []string
+	for _, dir := range dirs {
+		p, err := loadPackage(dir)
+		if err != nil {
+			return err
+		}
+		if p == nil || len(p.marked) == 0 {
+			continue
+		}
+
+		src := genFile(p)
+		formatted, err := format.Source(src)
+		if err != nil {
+			return fmt.Errorf("format %s: %w", dir, err)
+		}
+
+		out := filepath.Join(dir, "reset.gen.go")
+		if err := os.WriteFile(out, formatted, 0644); err != nil {
+			return err
+		}
+		generated = append(generated, out)
+	}
+
+	for _, g := range generated {
+		fmt.Println("generated:", g)
+	}
+	return nil
+}
+
+func loadPackage(dir string) (*pkgInfo, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	p := &pkgInfo{
+		dir:         dir,
+		structs:     make(map[string]*ast.StructType),
+		hasReset:    make(map[string]bool),
+		markedNames: make(map[string]bool),
+	}
+
+	fset := token.NewFileSet()
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".go") ||
+			strings.HasSuffix(name, "_test.go") ||
+			strings.HasSuffix(name, ".gen.go") {
+			continue
+		}
+
+		fpath := filepath.Join(dir, name)
+		f, err := parser.ParseFile(fset, fpath, nil, parser.ParseComments)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", fpath, err)
+		}
+		if isGenerated(f) {
+			continue
+		}
+		if p.name == "" {
+			p.name = f.Name.Name
+		}
+		collectTypes(f, p)
+	}
+
+	if p.name == "" {
+		return nil, nil
+	}
+	return p, nil
+}
+
+func isGenerated(f *ast.File) bool {
+	if len(f.Comments) == 0 {
+		return false
+	}
+	first := f.Comments[0]
+	if first == nil || len(first.List) == 0 {
+		return false
+	}
+	return strings.Contains(first.List[0].Text, "Code generated") &&
+		strings.Contains(first.List[0].Text, "DO NOT EDIT")
+}
+
+func collectTypes(f *ast.File, p *pkgInfo) {
+	for _, d := range f.Decls {
+		fd, ok := d.(*ast.FuncDecl)
+		if !ok || fd.Recv == nil || fd.Name.Name != "Reset" {
+			continue
+		}
+		if len(fd.Recv.List) == 0 {
+			continue
+		}
+		var id *ast.Ident
+		switch t := fd.Recv.List[0].Type.(type) {
+		case *ast.Ident:
+			id = t
+		case *ast.StarExpr:
+			id, _ = t.X.(*ast.Ident)
+		}
+		if id != nil {
+			p.hasReset[id.Name] = true
+		}
+	}
+
+	for _, d := range f.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || gd.Tok != token.TYPE {
+			continue
+		}
+		docHasMarker := hasMarker(gd.Doc)
+		for _, spec := range gd.Specs {
+			ts, ok := spec.(*ast.TypeSpec)
+			if !ok {
+				continue
+			}
+			st, ok := ts.Type.(*ast.StructType)
+			if !ok {
+				continue
+			}
+			p.structs[ts.Name.Name] = st
+			marked := docHasMarker || hasMarker(ts.Doc) || hasMarker(ts.Comment)
+			if marked && !p.markedNames[ts.Name.Name] {
+				p.markedNames[ts.Name.Name] = true
+				p.marked = append(p.marked, ts)
+			}
+		}
+	}
+}
+
+func hasMarker(cg *ast.CommentGroup) bool {
+	if cg == nil {
+		return false
+	}
+	for _, c := range cg.List {
+		if strings.Contains(c.Text, "generate:reset") {
+			return true
+		}
+	}
+	return false
+}
+
+func genFile(p *pkgInfo) []byte {
+	var sb bytes.Buffer
+	sb.WriteString("// Code generated by go generate; DO NOT EDIT.\n")
+	sb.WriteString("// This file was generated by cmd/reset.\n\n")
+	fmt.Fprintf(&sb, "package %s\n\n", p.name)
+
+	for _, ts := range p.marked {
+		st := p.structs[ts.Name.Name]
+
+		fmt.Fprintf(&sb, "func (rs *%s) Reset() {\n", ts.Name.Name)
+		sb.WriteString("    if rs == nil {\n        return\n    }\n")
+
+		for _, line := range structFieldsReset("rs", st, p, 1) {
+			fmt.Fprintln(&sb, line)
+		}
+
+		sb.WriteString("}\n\n")
+	}
+
+	return sb.Bytes()
+}
+
+func embeddedName(typ ast.Expr) string {
+	switch t := typ.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		return embeddedName(t.X)
+	case *ast.SelectorExpr:
+		return t.Sel.Name
+	}
+	return ""
+}
+
+func pad(n int) string {
+	return strings.Repeat("    ", n)
+}
+
+func resetTarget(target string, typ ast.Expr, p *pkgInfo, indent int) []string {
+	switch t := typ.(type) {
+	case *ast.StarExpr:
+		inner := resetTarget("(*"+target+")", t.X, p, indent+1)
+		if len(inner) == 0 {
+			return nil
+		}
+		out := []string{pad(indent) + "if " + target + " != nil {"}
+		out = append(out, inner...)
+		out = append(out, pad(indent)+"}")
+		return out
+	case *ast.ArrayType:
+		if t.Len == nil {
+			return []string{pad(indent) + target + " = " + target + "[:0]"}
+		}
+		return resetArray(target, t, p, indent)
+	case *ast.MapType:
+		return []string{pad(indent) + "clear(" + target + ")"}
+	case *ast.Ident:
+		return resetIdent(target, t, p, indent)
+	case *ast.SelectorExpr:
+		return resetSelector(target, t, p, indent)
+	case *ast.StructType:
+		return structFieldsReset(target, t, p, indent)
+	}
+	return nil
+}
+
+func resetArray(target string, t *ast.ArrayType, p *pkgInfo, indent int) []string {
+	inner := resetTarget(target+"[i]", t.Elt, p, indent+1)
+	if len(inner) == 0 {
+		return nil
+	}
+	out := []string{pad(indent) + "for i := range " + target + " {"}
+	out = append(out, inner...)
+	out = append(out, pad(indent)+"}")
+	return out
+}
+
+func resetIdent(target string, id *ast.Ident, p *pkgInfo, indent int) []string {
+	if z, ok := basicTypes[id.Name]; ok {
+		return []string{pad(indent) + target + " = " + z}
+	}
+	st, ok := p.structs[id.Name]
+	if !ok {
+		return nil
+	}
+	if p.hasReset[id.Name] || p.markedNames[id.Name] {
+		return []string{pad(indent) + target + ".Reset()"}
+	}
+	return structFieldsReset(target, st, p, indent)
+}
+
+func resetSelector(target string, sel *ast.SelectorExpr, _ *pkgInfo, indent int) []string {
+	if sel.Sel.Name == "Duration" {
+		return []string{pad(indent) + target + " = 0"}
+	}
+	return nil
+}
+
+func structFieldsReset(target string, st *ast.StructType, p *pkgInfo, indent int) []string {
+	var out []string
+	for _, f := range st.Fields.List {
+		if len(f.Names) > 0 {
+			for _, n := range f.Names {
+				out = append(out, resetTarget(target+"."+n.Name, f.Type, p, indent)...)
+			}
+			continue
+		}
+		nm := embeddedName(f.Type)
+		if nm == "" {
+			continue
+		}
+		out = append(out, resetTarget(target+"."+nm, f.Type, p, indent)...)
+	}
+	return out
+}

@@ -33,7 +33,7 @@ func BenchmarkMemStorage_AddCounter(b *testing.B) {
 func BenchmarkMemStorage_GetGauge(b *testing.B) {
 	storage := NewMemStorage("")
 	ctx := context.Background()
-	storage.SetGauge(ctx, "test_gauge", 123.456)
+	_ = storage.SetGauge(ctx, "test_gauge", 123.456)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -45,7 +45,7 @@ func BenchmarkMemStorage_GetGauge(b *testing.B) {
 func BenchmarkMemStorage_GetCounter(b *testing.B) {
 	storage := NewMemStorage("")
 	ctx := context.Background()
-	storage.AddCounter(ctx, "test_counter", 100)
+	_ = storage.AddCounter(ctx, "test_counter", 100)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -59,8 +59,8 @@ func BenchmarkMemStorage_GetAll(b *testing.B) {
 	ctx := context.Background()
 
 	for i := 0; i < 100; i++ {
-		storage.SetGauge(ctx, fmt.Sprintf("gauge_%d", i), float64(i))
-		storage.AddCounter(ctx, fmt.Sprintf("counter_%d", i), int64(i))
+		_ = storage.SetGauge(ctx, fmt.Sprintf("gauge_%d", i), float64(i))
+		_ = storage.AddCounter(ctx, fmt.Sprintf("counter_%d", i), int64(i))
 	}
 
 	b.ReportAllocs()
@@ -101,10 +101,10 @@ func BenchmarkMemStorage_Concurrent(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			storage.SetGauge(ctx, fmt.Sprintf("gauge_%d", i), float64(i))
-			storage.AddCounter(ctx, fmt.Sprintf("counter_%d", i), int64(i))
-			storage.GetGauge(ctx, fmt.Sprintf("gauge_%d", i%10))
-			storage.GetCounter(ctx, fmt.Sprintf("counter_%d", i%10))
+			_ = storage.SetGauge(ctx, fmt.Sprintf("gauge_%d", i), float64(i))
+			_ = storage.AddCounter(ctx, fmt.Sprintf("counter_%d", i), int64(i))
+			_, _ = storage.GetGauge(ctx, fmt.Sprintf("gauge_%d", i%10))
+			_, _ = storage.GetCounter(ctx, fmt.Sprintf("counter_%d", i%10))
 			i++
 		}
 	})
@@ -115,8 +115,8 @@ func BenchmarkMemStorage_SaveToFile(b *testing.B) {
 	ctx := context.Background()
 
 	for i := 0; i < 100; i++ {
-		storage.SetGauge(ctx, fmt.Sprintf("gauge_%d", i), float64(i))
-		storage.AddCounter(ctx, fmt.Sprintf("counter_%d", i), int64(i))
+		_ = storage.SetGauge(ctx, fmt.Sprintf("gauge_%d", i), float64(i))
+		_ = storage.AddCounter(ctx, fmt.Sprintf("counter_%d", i), int64(i))
 	}
 
 	b.ReportAllocs()
