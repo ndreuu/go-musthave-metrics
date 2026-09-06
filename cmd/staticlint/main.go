@@ -1,12 +1,15 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
+	"path/filepath"
+
+	"go-musthave-metrics/cmd/staticlint/osexit"
 
 	"github.com/kisielk/errcheck/errcheck"
 	"github.com/timakin/bodyclose/passes/bodyclose"
-	"go-musthave-metrics/cmd/staticlint/osexit"
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/multichecker"
 	"golang.org/x/tools/go/analysis/passes/appends"
@@ -58,8 +61,9 @@ import (
 	"honnef.co/go/tools/stylecheck"
 )
 
-// getStandardAnalyzers возвращает диагностические стандартные анализаторы
-// пакета golang.org/x/tools/go/analysis/passes.
+//go:embed errcheck_excludes.txt
+var errcheckExcludes []byte
+
 func getStandardAnalyzers() []*analysis.Analyzer {
 	return []*analysis.Analyzer{
 		appends.Analyzer,
@@ -108,25 +112,24 @@ func getStandardAnalyzers() []*analysis.Analyzer {
 	}
 }
 
-// getStaticcheckAnalyzers возвращает все анализаторы класса SA из
-// staticcheck.io (обнаружение ошибок и неправильного использования API),
-// а также анализатор ST1005 из класса Stylecheck, проверяющий, что
-// строки ошибок не начинаются с заглавной буквы.
 func getStaticcheckAnalyzers() []*analysis.Analyzer {
 	result := unwrapLintAnalyzers(staticcheck.Analyzers)
 
+	stylecheckNames := map[string]bool{
+		"ST1000": true,
+		"ST1005": true,
+		"ST1020": true,
+	}
+
 	for _, a := range stylecheck.Analyzers {
-		if a.Analyzer.Name == "ST1005" {
+		if stylecheckNames[a.Analyzer.Name] {
 			result = append(result, a.Analyzer)
-			break
 		}
 	}
 
 	return result
 }
 
-// unwrapLintAnalyzers разворачивает анализаторы staticcheck (обёрнутые в
-// lint.Analyzer) в обычные go/analysis анализаторы.
 func unwrapLintAnalyzers(list []*lint.Analyzer) []*analysis.Analyzer {
 	result := make([]*analysis.Analyzer, 0, len(list))
 	for _, a := range list {
@@ -137,16 +140,34 @@ func unwrapLintAnalyzers(list []*lint.Analyzer) []*analysis.Analyzer {
 	return result
 }
 
+func configureErrcheck() error {
+	excludePath := filepath.Join(
+		os.TempDir(),
+		"go-musthave-metrics-errcheck-excludes.txt",
+	)
+
+	if err := os.WriteFile(excludePath, errcheckExcludes, 0o600); err != nil {
+		return fmt.Errorf("write errcheck excludes: %w", err)
+	}
+
+	if err := errcheck.Analyzer.Flags.Set("exclude", excludePath); err != nil {
+		return fmt.Errorf("set errcheck exclude file: %w", err)
+	}
+
+	return nil
+}
+
 func main() {
 	analyzers := getStandardAnalyzers()
 	analyzers = append(analyzers, getStaticcheckAnalyzers()...)
 
-	if err := errcheck.Analyzer.Flags.Set("exclude", "cmd/staticlint/errcheck_excludes.txt"); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to set errcheck exclude file: %v\n", err)
+	if err := configureErrcheck(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to configure errcheck: %v\n", err)
+		return
 	}
+
 	analyzers = append(analyzers, errcheck.Analyzer)
 	analyzers = append(analyzers, bodyclose.Analyzer)
-
 	analyzers = append(analyzers, osexit.Analyzer)
 
 	multichecker.Main(analyzers...)

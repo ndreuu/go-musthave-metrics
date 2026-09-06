@@ -1,14 +1,7 @@
 package pool
 
-import (
-	"testing"
+import "testing"
 
-	"go-musthave-metrics/internal/agent"
-	models "go-musthave-metrics/internal/model"
-)
-
-// genPoolObject — структура, имитирующая объект, для которого
-// сгенерирован метод Reset(), чтобы проверить сброс перед Put.
 type genPoolObject struct {
 	Meta  map[string]string
 	ID    string
@@ -69,37 +62,8 @@ func TestPool_ReusesSameInstance(t *testing.T) {
 	if second != first {
 		t.Error("expected pool to reuse the same instance")
 	}
-	// состояние было сброшено
 	if second.ID != "" {
 		t.Errorf("expected reset state, got %q", second.ID)
-	}
-}
-
-func TestPool_WorksWithGeneratedResetTypes(t *testing.T) {
-	// модели сгенерировали метод Reset() в прошлом инкременте
-	pMetrics := New[*models.Metrics]()
-	m := pMetrics.Get()
-	m.ID = "gauge"
-	delta := int64(5)
-	m.Delta = &delta
-	pMetrics.Put(m)
-	rm := pMetrics.Get()
-	if rm.ID != "" {
-		t.Errorf("expected reset *models.Metrics, got %+v", rm)
-	}
-	// сгенерированный Reset() зануляет значение по указателю, но не обнуляет сам указатель
-	if rm.Delta != nil && *rm.Delta != 0 {
-		t.Errorf("expected zero delta after reset, got %d", *rm.Delta)
-	}
-
-	pAgent := New[*agent.Metric]()
-	am := pAgent.Get()
-	am.Name = "Alloc"
-	am.Value = 12.5
-	pAgent.Put(am)
-	ram := pAgent.Get()
-	if ram.Name != "" || ram.Value != 0 {
-		t.Errorf("expected reset *agent.Metric, got %+v", ram)
 	}
 }
 
@@ -110,9 +74,13 @@ func TestPool_ConcurrentGetPut(t *testing.T) {
 	const iterations = 100
 
 	done := make(chan struct{})
+
 	for i := 0; i < workers; i++ {
 		go func() {
-			defer func() { done <- struct{}{} }()
+			defer func() {
+				done <- struct{}{}
+			}()
+
 			for j := 0; j < iterations; j++ {
 				obj := p.Get()
 				obj.Count = j

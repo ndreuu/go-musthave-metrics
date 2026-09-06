@@ -228,32 +228,18 @@ func genFile(p *pkgInfo) []byte {
 
 	for _, ts := range p.marked {
 		st := p.structs[ts.Name.Name]
+
 		fmt.Fprintf(&sb, "func (rs *%s) Reset() {\n", ts.Name.Name)
 		sb.WriteString("    if rs == nil {\n        return\n    }\n")
-		for _, l := range structResetBody(st, p) {
-			fmt.Fprintln(&sb, l)
+
+		for _, line := range structFieldsReset("rs", st, p, 1) {
+			fmt.Fprintln(&sb, line)
 		}
+
 		sb.WriteString("}\n\n")
 	}
-	return sb.Bytes()
-}
 
-func structResetBody(st *ast.StructType, p *pkgInfo) []string {
-	var lines []string
-	for _, f := range st.Fields.List {
-		if len(f.Names) > 0 {
-			for _, n := range f.Names {
-				lines = append(lines, resetTarget("rs."+n.Name, f.Type, p, 1)...)
-			}
-			continue
-		}
-		nm := embeddedName(f.Type)
-		if nm == "" {
-			continue
-		}
-		lines = append(lines, resetTarget("rs."+nm, f.Type, p, 1)...)
-	}
-	return lines
+	return sb.Bytes()
 }
 
 func embeddedName(typ ast.Expr) string {

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"go-musthave-metrics/internal/buildinfo"
 	"go-musthave-metrics/internal/config/db"
 	"go-musthave-metrics/internal/handler"
 	"go-musthave-metrics/internal/logger"
@@ -21,12 +22,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-)
-
-var (
-	buildVersion string
-	buildDate    string
-	buildCommit  string
 )
 
 var (
@@ -93,27 +88,8 @@ func parseFlags() error {
 	return nil
 }
 
-func printBuildInfo() {
-	version := buildVersion
-	if version == "" {
-		version = "N/A"
-	}
-	date := buildDate
-	if date == "" {
-		date = "N/A"
-	}
-	commit := buildCommit
-	if commit == "" {
-		commit = "N/A"
-	}
-
-	fmt.Printf("Build version: %s\n", version)
-	fmt.Printf("Build date: %s\n", date)
-	fmt.Printf("Build commit: %s\n", commit)
-}
-
 func main() {
-	printBuildInfo()
+	buildinfo.Print()
 
 	if err := parseFlags(); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
@@ -177,7 +153,14 @@ func main() {
 	if flagStoreInterval == 0 && flagFilePath != "" && dbConn == nil {
 		syncFilePath = flagFilePath
 	}
-	metricsHandler := handler.NewMetricsHandler(metricsService, storage, syncFilePath, flagKey, auditService)
+
+	metricsHandler := handler.NewMetricsHandler(
+		metricsService,
+		storage,
+		syncFilePath,
+		flagKey,
+		auditService,
+	)
 
 	var pingHandler *handler.PingHandler
 	if dbConn != nil {
@@ -218,16 +201,27 @@ func main() {
 
 	if flagStoreInterval > 0 && flagFilePath != "" && dbConn == nil {
 		go func(ctx context.Context) {
-			ticker := time.NewTicker(time.Duration(flagStoreInterval) * time.Second)
+			ticker := time.NewTicker(
+				time.Duration(flagStoreInterval) * time.Second,
+			)
 			defer ticker.Stop()
+
 			for {
 				select {
 				case <-ticker.C:
 					if err := storage.(*repository.MemStorage).SaveToFile(); err != nil {
-						log.Error("Failed to save metrics to file", zap.String("file", flagFilePath), zap.Error(err))
+						log.Error(
+							"Failed to save metrics to file",
+							zap.String("file", flagFilePath),
+							zap.Error(err),
+						)
 					} else {
-						log.Info("Metrics saved to file", zap.String("file", flagFilePath))
+						log.Info(
+							"Metrics saved to file",
+							zap.String("file", flagFilePath),
+						)
 					}
+
 				case <-ctx.Done():
 					log.Info("Store ticker stopped")
 					return
@@ -255,7 +249,10 @@ func main() {
 
 	log.Info("Shutting down server...")
 
-	ctxShutdown, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	ctxShutdown, cancelShutdown := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
 	defer cancelShutdown()
 
 	if err := server.Shutdown(ctxShutdown); err != nil {
@@ -264,10 +261,8 @@ func main() {
 
 	cancel()
 
-	if auditService != nil {
-		if err := auditService.Close(); err != nil {
-			log.Error("Failed to close audit service", zap.Error(err))
-		}
+	if err := auditService.Close(); err != nil {
+		log.Error("Failed to close audit service", zap.Error(err))
 	}
 
 	if dbConn != nil {

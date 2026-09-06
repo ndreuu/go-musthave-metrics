@@ -211,6 +211,10 @@ func (p *PostgresStorage) GetAll() []models.Metrics {
 		}
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil
+	}
+
 	return result
 }
 

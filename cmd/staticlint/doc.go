@@ -12,8 +12,9 @@
 //   - standard analyzers from golang.org/x/tools/go/analysis/passes;
 //   - all SA analyzers from Staticcheck, which detect bugs, incorrect
 //     API usage and performance problems;
-//   - the ST1005 analyzer from the Stylecheck class, which checks that
-//     error strings are not capitalized;
+//   - the ST1000, ST1005 and ST1020 analyzers from the Stylecheck class:
+//     ST1000 checks package comments, ST1005 checks error strings,
+//     and ST1020 checks documentation of exported functions;
 //   - errcheck, which detects ignored errors returned by functions;
 //   - bodyclose, which detects HTTP response bodies that are not closed;
 //   - osexit, a custom analyzer that prohibits direct os.Exit calls from
