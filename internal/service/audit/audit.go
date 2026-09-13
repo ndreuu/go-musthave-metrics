@@ -148,10 +148,11 @@ func (o *FileObserver) Close() error {
 	o.file = nil
 	return nil
 }
+
 // URLObserver реализует Observer для отправки событий на URL.
 type URLObserver struct {
-	url    string
 	client *http.Client
+	url    string
 }
 
 // NewURLObserver создает наблюдателя для отправки событий на URL.

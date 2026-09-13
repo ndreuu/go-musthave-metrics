@@ -19,11 +19,11 @@ import (
 // MetricsHandler обрабатывает HTTP-запросы для операций с метриками.
 // Предоставляет методы для обновления, получения и списка метрик через REST API.
 type MetricsHandler struct {
-	service      *service.MetricsService
 	storage      repository.Storage
+	service      *service.MetricsService
+	auditService *audit.AuditService
 	filePath     string
 	key          string
-	auditService *audit.AuditService
 }
 
 // NewMetricsHandler создает новый экземпляр MetricsHandler.

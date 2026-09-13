@@ -14,6 +14,8 @@ import (
 )
 
 // Metric представляет отдельную метрику с именем, типом и значением.
+//
+// generate:reset
 type Metric struct {
 	MType string
 	Name  string
@@ -21,11 +23,13 @@ type Metric struct {
 }
 
 // Collector собирает метрики Go runtime и системы.
+//
+// generate:reset
 type Collector struct {
-	mu         sync.RWMutex
 	metrics    map[string]*Metric
-	pollCount  int64
 	randSource *rand.Rand
+	pollCount  int64
+	mu         sync.RWMutex
 }
 
 // NewCollector создает новый экземпляр Collector.

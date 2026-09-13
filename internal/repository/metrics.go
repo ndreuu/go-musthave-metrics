@@ -13,10 +13,10 @@ import (
 
 // MemStorage реализует интерфейс MetricsStorage в памяти с сохранением в файл.
 type MemStorage struct {
-	mu       sync.RWMutex
 	gauges   map[string]float64
 	counters map[string]int64
 	filePath string
+	mu       sync.RWMutex
 }
 
 // NewMemStorage создает новое хранилище метрик в памяти.

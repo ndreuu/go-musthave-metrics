@@ -127,6 +127,21 @@ func TestCollector_GetMetrics(t *testing.T) {
 	}
 }
 
+func TestCollector_CollectGopsutil(t *testing.T) {
+	collector := NewCollector()
+
+	collector.CollectGopsutil()
+
+	metrics := collector.GetMetrics()
+	_ = metrics
+
+	if m := collector.GetMetric("TotalMemory"); m != nil {
+		if m.MType != "gauge" {
+			t.Errorf("TotalMemory should be a gauge, got %s", m.MType)
+		}
+	}
+}
+
 func TestCollector_Collect_RuntimeMetricsTypes(t *testing.T) {
 	collector := NewCollector()
 	collector.Collect()

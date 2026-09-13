@@ -2,6 +2,7 @@ package handler_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -69,7 +70,7 @@ func ExampleMetricsHandler_GetMetricHandler() {
 	h := handler.NewMetricsHandler(metricsService, storage, "", "", auditService)
 
 	// Сначала установим значение
-	storage.SetGauge(nil, "TestGauge", 42.5)
+	_ = storage.SetGauge(context.Background(), "TestGauge", 42.5)
 
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -118,7 +119,7 @@ func ExampleMetricsHandler_GetMetricJSONHandler() {
 	h := handler.NewMetricsHandler(metricsService, storage, "", "", auditService)
 
 	// Сначала установим значение
-	storage.SetGauge(nil, "TestGauge", 42.5)
+	_ = storage.SetGauge(context.Background(), "TestGauge", 42.5)
 
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -133,7 +134,7 @@ func ExampleMetricsHandler_GetMetricJSONHandler() {
 	fmt.Println(w.Code)
 
 	var result map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &result)
+	_ = json.Unmarshal(w.Body.Bytes(), &result)
 	fmt.Printf("id: %s, type: %s, value: %v\n", result["id"], result["type"], result["value"])
 	// Output:
 	// 200
