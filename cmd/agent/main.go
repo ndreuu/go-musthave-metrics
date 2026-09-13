@@ -43,13 +43,16 @@ func main() {
 	cfg := agent.NewConfig()
 
 	collector := agent.NewCollector()
-	sender := agent.NewSender(cfg.ServerAddress, cfg.Key)
+	sender := agent.NewSender(cfg.ServerAddress, cfg.Key, cfg.CryptoKey)
 
 	fmt.Printf("Agent starting with configuration:\n")
 	fmt.Printf("  Poll Interval: %v\n", cfg.PollInterval)
 	fmt.Printf("  Report Interval: %v\n", cfg.ReportInterval)
 	fmt.Printf("  Server Address: %s\n", cfg.ServerAddress)
 	fmt.Printf("  Rate Limit: %d\n", cfg.RateLimit)
+	if cfg.CryptoKey != "" {
+		fmt.Printf("  Crypto Key: %s\n", cfg.CryptoKey)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
