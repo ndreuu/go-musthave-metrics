@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rsa"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 
 	"go-musthave-metrics/internal/buildinfo"
 	"go-musthave-metrics/internal/config/db"
+	"go-musthave-metrics/internal/crypto"
 	"go-musthave-metrics/internal/handler"
 	"go-musthave-metrics/internal/logger"
 	"go-musthave-metrics/internal/middleware"
@@ -24,6 +27,26 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	defaultRunAddr       = ":8080"
+	defaultLogLevel      = "info"
+	defaultStoreInterval = 300
+	defaultRestore       = false
+)
+
+type fileConfig struct {
+	Address        string `json:"address"`
+	Restore        *bool  `json:"restore"`
+	StoreInterval  string `json:"store_interval"`
+	StoreFile      string `json:"store_file"`
+	DatabaseDSN    string `json:"database_dsn"`
+	CryptoKey      string `json:"crypto_key"`
+	Key            string `json:"key"`
+	LogLevel       string `json:"log_level"`
+	AuditFile      string `json:"audit_file"`
+	AuditURL       string `json:"audit_url"`
+}
+
 var (
 	flagRunAddr       string
 	flagLogLevel      string
@@ -32,57 +55,118 @@ var (
 	flagRestore       bool
 	flagDBDSN         string
 	flagKey           string
+	flagCryptoKey     string
 	flagAuditFile     string
 	flagAuditURL      string
+	flagConfig        string
 	filePathSet       bool
 )
 
 func parseFlags() error {
-	flag.StringVar(&flagRunAddr, "a", ":8080", "address and port to run server")
-	flag.StringVar(&flagLogLevel, "l", "info", "log level")
-	flag.IntVar(&flagStoreInterval, "i", 300, "store interval in seconds")
+	flag.StringVar(&flagRunAddr, "a", defaultRunAddr, "address and port to run server")
+	flag.StringVar(&flagLogLevel, "l", defaultLogLevel, "log level")
+	flag.IntVar(&flagStoreInterval, "i", defaultStoreInterval, "store interval in seconds")
 	flag.StringVar(&flagFilePath, "f", "", "path to metrics file")
-	flag.BoolVar(&flagRestore, "r", false, "restore metrics from file")
+	flag.BoolVar(&flagRestore, "r", defaultRestore, "restore metrics from file")
 	flag.StringVar(&flagDBDSN, "d", "", "database DSN")
 	flag.StringVar(&flagKey, "k", "", "key for signing data")
+	flag.StringVar(&flagCryptoKey, "crypto-key", "", "path to private key file for decryption")
 	flag.StringVar(&flagAuditFile, "audit-file", "", "path to audit log file")
 	flag.StringVar(&flagAuditURL, "audit-url", "", "URL to send audit logs")
+	flag.StringVar(&flagConfig, "c", "", "path to JSON config file")
+	flag.StringVar(&flagConfig, "config", "", "path to JSON config file")
 	flag.Parse()
 
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "f" {
-			filePathSet = true
-		}
-	})
+	setFlags := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
 
-	if envAddr, ok := os.LookupEnv("ADDRESS"); ok && envAddr != "" {
-		flagRunAddr = envAddr
-	}
-	if envLogLevel, ok := os.LookupEnv("LOG_LEVEL"); ok && envLogLevel != "" {
-		flagLogLevel = envLogLevel
-	}
-	if envInterval, ok := os.LookupEnv("STORE_INTERVAL"); ok && envInterval != "" {
-		v, err := strconv.Atoi(envInterval)
-		if err != nil {
-			return fmt.Errorf("invalid STORE_INTERVAL value: %s", envInterval)
+	// Путь к конфигурации: флаг -c/-config имеет приоритет над CONFIG.
+	cfgPath := flagConfig
+	if !setFlags["c"] && !setFlags["config"] {
+		if env, ok := os.LookupEnv("CONFIG"); ok && env != "" {
+			cfgPath = env
 		}
-		flagStoreInterval = v
 	}
-	if envPath, ok := os.LookupEnv("FILE_STORAGE_PATH"); ok && envPath != "" {
-		flagFilePath = envPath
+
+	var fc fileConfig
+	if cfgPath != "" {
+		data, err := os.ReadFile(cfgPath)
+		if err != nil {
+			return fmt.Errorf("failed to read config file %s: %w", cfgPath, err)
+		}
+		if err := json.Unmarshal(data, &fc); err != nil {
+			return fmt.Errorf("failed to parse config file %s: %w", cfgPath, err)
+		}
+	}
+
+	if v, ok := os.LookupEnv("ADDRESS"); ok && v != "" {
+		flagRunAddr = v
+	} else if !setFlags["a"] && fc.Address != "" {
+		flagRunAddr = fc.Address
+	}
+
+	if v, ok := os.LookupEnv("LOG_LEVEL"); ok && v != "" {
+		flagLogLevel = v
+	} else if !setFlags["l"] && fc.LogLevel != "" {
+		flagLogLevel = fc.LogLevel
+	}
+
+	if v, ok := os.LookupEnv("STORE_INTERVAL"); ok && v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("invalid STORE_INTERVAL value: %s", v)
+		}
+		flagStoreInterval = n
+	} else if !setFlags["i"] && fc.StoreInterval != "" {
+		n, err := strconv.Atoi(fc.StoreInterval)
+		if err != nil {
+			return fmt.Errorf("invalid store_interval value in config: %s", fc.StoreInterval)
+		}
+		flagStoreInterval = n
+	}
+
+	if v, ok := os.LookupEnv("FILE_STORAGE_PATH"); ok && v != "" {
+		flagFilePath = v
+		filePathSet = true
+	} else if !setFlags["f"] && fc.StoreFile != "" {
+		flagFilePath = fc.StoreFile
 		filePathSet = true
 	}
-	if envRestore, ok := os.LookupEnv("RESTORE"); ok && envRestore != "" {
-		flagRestore = envRestore == "true"
+
+	if v, ok := os.LookupEnv("RESTORE"); ok && v != "" {
+		flagRestore = v == "true"
+	} else if !setFlags["r"] && fc.Restore != nil {
+		flagRestore = *fc.Restore
 	}
-	if envKey, ok := os.LookupEnv("KEY"); ok && envKey != "" {
-		flagKey = envKey
+
+	if v, ok := os.LookupEnv("DATABASE_DSN"); ok && v != "" {
+		flagDBDSN = v
+	} else if !setFlags["d"] && fc.DatabaseDSN != "" {
+		flagDBDSN = fc.DatabaseDSN
 	}
-	if envAuditFile, ok := os.LookupEnv("AUDIT_FILE"); ok && envAuditFile != "" {
-		flagAuditFile = envAuditFile
+
+	if v, ok := os.LookupEnv("KEY"); ok && v != "" {
+		flagKey = v
+	} else if !setFlags["k"] && fc.Key != "" {
+		flagKey = fc.Key
 	}
-	if envAuditURL, ok := os.LookupEnv("AUDIT_URL"); ok && envAuditURL != "" {
-		flagAuditURL = envAuditURL
+
+	if v, ok := os.LookupEnv("CRYPTO_KEY"); ok && v != "" {
+		flagCryptoKey = v
+	} else if !setFlags["crypto-key"] && fc.CryptoKey != "" {
+		flagCryptoKey = fc.CryptoKey
+	}
+
+	if v, ok := os.LookupEnv("AUDIT_FILE"); ok && v != "" {
+		flagAuditFile = v
+	} else if !setFlags["audit-file"] && fc.AuditFile != "" {
+		flagAuditFile = fc.AuditFile
+	}
+
+	if v, ok := os.LookupEnv("AUDIT_URL"); ok && v != "" {
+		flagAuditURL = v
+	} else if !setFlags["audit-url"] && fc.AuditURL != "" {
+		flagAuditURL = fc.AuditURL
 	}
 
 	return nil
@@ -104,6 +188,15 @@ func main() {
 	defer func() {
 		_ = log.Sync()
 	}()
+
+	var privateKey *rsa.PrivateKey
+	if flagCryptoKey != "" {
+		privateKey, err = crypto.LoadPrivateKey(flagCryptoKey)
+		if err != nil {
+			log.Fatal("Failed to load private key", zap.Error(err))
+		}
+		log.Info("Private key loaded", zap.String("path", flagCryptoKey))
+	}
 
 	dbConfig := db.NewConfig()
 	dbConfig.LoadFromEnv()
@@ -180,6 +273,7 @@ func main() {
 	r.GET("/", metricsHandler.ListMetricsHandler)
 
 	jsonRoutes := r.Group("/")
+	jsonRoutes.Use(middleware.Decrypt(privateKey))
 	jsonRoutes.Use(middleware.HashSHA256(flagKey))
 	{
 		jsonRoutes.POST("/update", metricsHandler.UpdateMetricJSONHandler)
