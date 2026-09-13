@@ -12,6 +12,7 @@ import (
 type Config struct {
 	ServerAddress  string
 	Key            string
+	CryptoKey      string
 	PollInterval   time.Duration
 	ReportInterval time.Duration
 	RateLimit      int
@@ -23,6 +24,7 @@ func NewConfig() *Config {
 		reportInterval int
 		pollInterval   int
 		key            string
+		cryptoKey      string
 		rateLimit      int
 	)
 
@@ -30,6 +32,7 @@ func NewConfig() *Config {
 	flag.IntVar(&reportInterval, "r", 10, "report interval in seconds")
 	flag.IntVar(&pollInterval, "p", 2, "poll interval in seconds")
 	flag.StringVar(&key, "k", "", "key for signing data")
+	flag.StringVar(&cryptoKey, "crypto-key", "", "path to public key file for encryption")
 	flag.IntVar(&rateLimit, "l", 2, "rate limit (max concurrent requests)")
 	flag.Parse()
 
@@ -48,6 +51,9 @@ func NewConfig() *Config {
 	}
 	if envKey, ok := os.LookupEnv("KEY"); ok && envKey != "" {
 		key = envKey
+	}
+	if envCryptoKey, ok := os.LookupEnv("CRYPTO_KEY"); ok && envCryptoKey != "" {
+		cryptoKey = envCryptoKey
 	}
 	if envRateLimit, ok := os.LookupEnv("RATE_LIMIT"); ok && envRateLimit != "" {
 		if limit, err := strconv.Atoi(envRateLimit); err == nil {
@@ -68,6 +74,7 @@ func NewConfig() *Config {
 		ReportInterval: time.Duration(reportInterval) * time.Second,
 		ServerAddress:  serverAddress,
 		Key:            key,
+		CryptoKey:      cryptoKey,
 		RateLimit:      rateLimit,
 	}
 }

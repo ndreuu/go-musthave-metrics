@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rsa"
 	"flag"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"go-musthave-metrics/internal/buildinfo"
 	"go-musthave-metrics/internal/config/db"
+	"go-musthave-metrics/internal/crypto"
 	"go-musthave-metrics/internal/handler"
 	"go-musthave-metrics/internal/logger"
 	"go-musthave-metrics/internal/middleware"
@@ -32,6 +34,7 @@ var (
 	flagRestore       bool
 	flagDBDSN         string
 	flagKey           string
+	flagCryptoKey     string
 	flagAuditFile     string
 	flagAuditURL      string
 	filePathSet       bool
@@ -45,6 +48,7 @@ func parseFlags() error {
 	flag.BoolVar(&flagRestore, "r", false, "restore metrics from file")
 	flag.StringVar(&flagDBDSN, "d", "", "database DSN")
 	flag.StringVar(&flagKey, "k", "", "key for signing data")
+	flag.StringVar(&flagCryptoKey, "crypto-key", "", "path to private key file for decryption")
 	flag.StringVar(&flagAuditFile, "audit-file", "", "path to audit log file")
 	flag.StringVar(&flagAuditURL, "audit-url", "", "URL to send audit logs")
 	flag.Parse()
@@ -78,6 +82,9 @@ func parseFlags() error {
 	if envKey, ok := os.LookupEnv("KEY"); ok && envKey != "" {
 		flagKey = envKey
 	}
+	if envCryptoKey, ok := os.LookupEnv("CRYPTO_KEY"); ok && envCryptoKey != "" {
+		flagCryptoKey = envCryptoKey
+	}
 	if envAuditFile, ok := os.LookupEnv("AUDIT_FILE"); ok && envAuditFile != "" {
 		flagAuditFile = envAuditFile
 	}
@@ -104,6 +111,15 @@ func main() {
 	defer func() {
 		_ = log.Sync()
 	}()
+
+	var privateKey *rsa.PrivateKey
+	if flagCryptoKey != "" {
+		privateKey, err = crypto.LoadPrivateKey(flagCryptoKey)
+		if err != nil {
+			log.Fatal("Failed to load private key", zap.Error(err))
+		}
+		log.Info("Private key loaded", zap.String("path", flagCryptoKey))
+	}
 
 	dbConfig := db.NewConfig()
 	dbConfig.LoadFromEnv()
@@ -180,6 +196,7 @@ func main() {
 	r.GET("/", metricsHandler.ListMetricsHandler)
 
 	jsonRoutes := r.Group("/")
+	jsonRoutes.Use(middleware.Decrypt(privateKey))
 	jsonRoutes.Use(middleware.HashSHA256(flagKey))
 	{
 		jsonRoutes.POST("/update", metricsHandler.UpdateMetricJSONHandler)

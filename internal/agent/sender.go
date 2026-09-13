@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"go-musthave-metrics/internal/crypto"
 	models "go-musthave-metrics/internal/model"
 	"go-musthave-metrics/pkg/retry"
 )
@@ -20,17 +22,34 @@ type Sender struct {
 	serverAddress string
 	client        *http.Client
 	key           string
+	publicKey     *rsa.PublicKey
 }
 
 // NewSender создает новый экземпляр Sender.
 // serverAddress - адрес сервера (например, "http://localhost:8080").
 // key - секретный ключ для вычисления хеша (пустая строка отключает проверку).
-func NewSender(serverAddress string, key string) *Sender {
-	return &Sender{
+// cryptoKey - путь к файлу публичного ключа для шифрования тела запроса
+// (пустая строка отключает шифрование).
+func NewSender(serverAddress string, key string, cryptoKey string) *Sender {
+	s := &Sender{
 		serverAddress: serverAddress,
 		client:        &http.Client{},
 		key:           key,
 	}
+	if cryptoKey != "" {
+		if pub, err := crypto.LoadPublicKey(cryptoKey); err == nil {
+			s.publicKey = pub
+		}
+	}
+	return s
+}
+
+// encrypt применяет асимметричное шифрование к данным, если задан публичный ключ.
+func (s *Sender) encrypt(data []byte) ([]byte, error) {
+	if s.publicKey == nil {
+		return data, nil
+	}
+	return crypto.Encrypt(s.publicKey, data)
 }
 
 func calculateHash(data []byte, key string) string {
@@ -73,9 +92,14 @@ func (s *Sender) sendOnce(metric *Metric, endpoint string) error {
 		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
+	body, err := s.encrypt(jsonData)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt data: %w", err)
+	}
+
 	buf := &bytes.Buffer{}
 	gzWriter := gzip.NewWriter(buf)
-	if _, err = gzWriter.Write(jsonData); err != nil {
+	if _, err = gzWriter.Write(body); err != nil {
 		return fmt.Errorf("failed to compress data: %w", err)
 	}
 	if err = gzWriter.Close(); err != nil {
@@ -155,9 +179,14 @@ func (s *Sender) sendBatchOnce(metrics []*Metric) error {
 		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
+	body, err := s.encrypt(jsonData)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt data: %w", err)
+	}
+
 	buf := &bytes.Buffer{}
 	gzWriter := gzip.NewWriter(buf)
-	if _, err = gzWriter.Write(jsonData); err != nil {
+	if _, err = gzWriter.Write(body); err != nil {
 		return fmt.Errorf("failed to compress data: %w", err)
 	}
 	if err = gzWriter.Close(); err != nil {
