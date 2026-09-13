@@ -148,6 +148,37 @@ func (c *Collector) GetMetrics() []*Metric {
 	return result
 }
 
+func (c *Collector) DrainMetrics() []*Metric {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	result := make([]*Metric, 0, len(c.metrics))
+
+	for _, m := range c.metrics {
+		if m.MType == "counter" && m.Name == "PollCount" {
+			if c.pollCount == 0 {
+				continue
+			}
+			result = append(result, &Metric{
+				MType: "counter",
+				Name:  "PollCount",
+				Value: float64(c.pollCount),
+			})
+			continue
+		}
+
+		result = append(result, &Metric{
+			MType: m.MType,
+			Name:  m.Name,
+			Value: m.Value,
+		})
+	}
+
+	c.pollCount = 0
+
+	return result
+}
+
 // GetMetric возвращает метрику по имени.
 // Возвращает nil, если метрика не найдена.
 func (c *Collector) GetMetric(name string) *Metric {

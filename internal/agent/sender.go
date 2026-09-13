@@ -11,11 +11,14 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"go-musthave-metrics/internal/crypto"
 	models "go-musthave-metrics/internal/model"
 	"go-musthave-metrics/pkg/retry"
 )
+
+const requestTimeout = 5 * time.Second
 
 // Sender отправляет метрики на сервер.
 type Sender struct {
@@ -33,8 +36,10 @@ type Sender struct {
 func NewSender(serverAddress string, key string, cryptoKey string) *Sender {
 	s := &Sender{
 		serverAddress: serverAddress,
-		client:        &http.Client{},
-		key:           key,
+		client: &http.Client{
+			Timeout: requestTimeout,
+		},
+		key: key,
 	}
 	if cryptoKey != "" {
 		if pub, err := crypto.LoadPublicKey(cryptoKey); err == nil {

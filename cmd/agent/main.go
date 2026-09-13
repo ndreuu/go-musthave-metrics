@@ -54,39 +54,30 @@ func main() {
 		fmt.Printf("  Crypto Key: %s\n", cfg.CryptoKey)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	collectCtx, cancelCollectors := context.WithCancel(context.Background())
+	defer cancelCollectors()
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	var wg sync.WaitGroup
+	var collectorsWG sync.WaitGroup
+	var reporterWG sync.WaitGroup
+	var workersWG sync.WaitGroup
 
 	metricChan := make(chan *agent.Metric, cfg.RateLimit*2)
 
 	for i := 0; i < cfg.RateLimit; i++ {
-		wg.Add(1)
-		go func(workerId int) {
-			defer wg.Done()
-			for {
-				select {
-				case metric, ok := <-metricChan:
-					if !ok {
-						return
-					}
-					if err := sender.Send(metric); err != nil {
-						log.Printf("Worker %d: Error sending metric %s: %v", workerId, metric.Name, err)
-					}
-				case <-ctx.Done():
-					return
+		workersWG.Add(1)
+		go func(workerID int) {
+			defer workersWG.Done()
+			for metric := range metricChan {
+				if err := sender.Send(metric); err != nil {
+					log.Printf("Worker %d: error sending metric %s: %v", workerID, metric.Name, err)
 				}
 			}
 		}(i)
 	}
 
-	wg.Add(1)
+	collectorsWG.Add(1)
 	go func() {
-		defer wg.Done()
+		defer collectorsWG.Done()
 		ticker := time.NewTicker(cfg.PollInterval)
 		defer ticker.Stop()
 
@@ -95,16 +86,16 @@ func main() {
 			case <-ticker.C:
 				collector.Collect()
 				fmt.Printf("[%s] Runtime metrics collected\n", time.Now().Format(time.RFC3339))
-			case <-ctx.Done():
+			case <-collectCtx.Done():
 				fmt.Println("Runtime collector shutting down")
 				return
 			}
 		}
 	}()
 
-	wg.Add(1)
+	collectorsWG.Add(1)
 	go func() {
-		defer wg.Done()
+		defer collectorsWG.Done()
 		ticker := time.NewTicker(cfg.PollInterval)
 		defer ticker.Stop()
 
@@ -113,38 +104,35 @@ func main() {
 			case <-ticker.C:
 				collector.CollectGopsutil()
 				fmt.Printf("[%s] Gopsutil metrics collected\n", time.Now().Format(time.RFC3339))
-			case <-ctx.Done():
+			case <-collectCtx.Done():
 				fmt.Println("Gopsutil collector shutting down")
 				return
 			}
 		}
 	}()
 
-	wg.Add(1)
+	reporterWG.Add(1)
 	go func() {
-		defer wg.Done()
-		defer close(metricChan)
-
+		defer reporterWG.Done()
 		ticker := time.NewTicker(cfg.ReportInterval)
 		defer ticker.Stop()
 
 		for {
 			select {
 			case <-ticker.C:
-				metrics := collector.GetMetrics()
-				if len(metrics) > 0 {
-					for _, metric := range metrics {
-						select {
-						case metricChan <- metric:
-						case <-ctx.Done():
-							fmt.Println("Sender shutting down")
-							return
-						}
-					}
-					fmt.Printf("[%s] Sent %d metrics to worker pool\n", time.Now().Format(time.RFC3339), len(metrics))
+				metrics := collector.DrainMetrics()
+				if len(metrics) == 0 {
+					continue
 				}
-			case <-ctx.Done():
-				fmt.Println("Sender shutting down")
+				for _, metric := range metrics {
+					select {
+					case metricChan <- metric:
+					case <-collectCtx.Done():
+						return
+					}
+				}
+				fmt.Printf("[%s] Sent %d metrics to worker pool\n", time.Now().Format(time.RFC3339), len(metrics))
+			case <-collectCtx.Done():
 				return
 			}
 		}
@@ -152,10 +140,27 @@ func main() {
 
 	fmt.Println("Agent is running. Press Ctrl+C to stop.")
 
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	defer signal.Stop(sigChan)
+
 	<-sigChan
 	fmt.Println("\nShutting down agent...")
-	cancel()
 
-	wg.Wait()
+	cancelCollectors()
+
+	collectorsWG.Wait()
+
+	reporterWG.Wait()
+
+	metrics := collector.DrainMetrics()
+	for _, metric := range metrics {
+		metricChan <- metric
+	}
+
+	close(metricChan)
+
+	workersWG.Wait()
+
 	fmt.Println("Agent stopped")
 }

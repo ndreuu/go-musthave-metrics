@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -125,10 +126,12 @@ func parseFlags() error {
 		flagStoreInterval = n
 	}
 
-	if v, ok := os.LookupEnv("FILE_STORAGE_PATH"); ok && v != "" {
+	if setFlags["f"] {
+		filePathSet = true
+	} else if v, ok := os.LookupEnv("FILE_STORAGE_PATH"); ok && v != "" {
 		flagFilePath = v
 		filePathSet = true
-	} else if !setFlags["f"] && fc.StoreFile != "" {
+	} else if fc.StoreFile != "" {
 		flagFilePath = fc.StoreFile
 		filePathSet = true
 	}
@@ -293,8 +296,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	var storeWG sync.WaitGroup
 	if flagStoreInterval > 0 && flagFilePath != "" && dbConn == nil {
+		storeWG.Add(1)
 		go func(ctx context.Context) {
+			defer storeWG.Done()
 			ticker := time.NewTicker(
 				time.Duration(flagStoreInterval) * time.Second,
 			)
@@ -338,7 +344,7 @@ func main() {
 	}()
 
 	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	<-quit
 
 	log.Info("Shutting down server...")
@@ -350,10 +356,24 @@ func main() {
 	defer cancelShutdown()
 
 	if err := server.Shutdown(ctxShutdown); err != nil {
-		log.Fatal("Server forced to shutdown", zap.Error(err))
+		log.Error("Graceful shutdown timed out", zap.Error(err))
+		if closeErr := server.Close(); closeErr != nil {
+			log.Error("Failed to close server", zap.Error(closeErr))
+		}
 	}
 
 	cancel()
+
+	storeWG.Wait()
+	if flagFilePath != "" && dbConn == nil {
+		if memStorage, ok := storage.(*repository.MemStorage); ok {
+			if err := memStorage.SaveToFile(); err != nil {
+				log.Error("Failed to save metrics on shutdown", zap.Error(err))
+			} else {
+				log.Info("Metrics saved on shutdown", zap.String("file", flagFilePath))
+			}
+		}
+	}
 
 	if err := auditService.Close(); err != nil {
 		log.Error("Failed to close audit service", zap.Error(err))
