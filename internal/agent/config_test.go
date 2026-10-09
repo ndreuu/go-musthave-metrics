@@ -1,139 +1,146 @@
 package agent
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
 
-func TestParseInterval(t *testing.T) {
-	tests := []struct {
-		name       string
-		input      string
-		defSeconds int
-		want       time.Duration
-	}{
-		{"duration format", "10s", 5, 10 * time.Second},
-		{"duration minutes", "1m", 5, time.Minute},
-		{"plain seconds", "3", 5, 3 * time.Second},
-		{"invalid falls back to default", "abc", 5, 5 * time.Second},
-		{"empty falls back to default", "", 5, 5 * time.Second},
-	}
+func lookupEnvironment(values map[string]string) func(string) (string, bool) {
+	return func(name string) (string, bool) { value, ok := values[name]; return value, ok }
+}
 
+func writeConfig(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "agent.json")
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestGetConfigDefaults(t *testing.T) {
+	got, err := getConfig(nil, lookupEnvironment(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &Config{ServerAddress: "http://localhost:8080", PollInterval: 2 * time.Second, ReportInterval: 10 * time.Second, RateLimit: 2}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("config = %#v, want %#v", got, want)
+	}
+}
+
+func TestGetConfigSourcePriority(t *testing.T) {
+	path := writeConfig(t, `{"address":"file:8080","key":"file-key","crypto_key":"file.pem","poll_interval":"1s","report_interval":"1m","rate_limit":3}`)
+	file := &Config{ServerAddress: "http://file:8080", Key: "file-key", CryptoKey: "file.pem", PollInterval: time.Second, ReportInterval: time.Minute, RateLimit: 3}
+	environment := map[string]string{
+		"ADDRESS": "https://env:8080", "KEY": "env-key", "CRYPTO_KEY": "env.pem",
+		"POLL_INTERVAL": "4", "REPORT_INTERVAL": "5s", "RATE_LIMIT": "6",
+	}
+	tests := []struct {
+		name string
+		args []string
+		env  map[string]string
+		want *Config
+	}{
+		{"file beats defaults", nil, nil, file},
+		{"env beats file", nil, environment, &Config{ServerAddress: "https://env:8080", Key: "env-key", CryptoKey: "env.pem", PollInterval: 4 * time.Second, ReportInterval: 5 * time.Second, RateLimit: 6}},
+		{"explicit flags beat env", []string{"-a=flag:8080", "-k=flag-key", "-crypto-key=flag.pem", "-p=7s", "-r=8", "-l=9"}, environment, &Config{ServerAddress: "http://flag:8080", Key: "flag-key", CryptoKey: "flag.pem", PollInterval: 7 * time.Second, ReportInterval: 8 * time.Second, RateLimit: 9}},
+		{"empty env is absent", nil, map[string]string{"ADDRESS": "", "KEY": "", "RATE_LIMIT": ""}, file},
+		{"explicit zero rate and empty strings", []string{"-a=", "-k=", "-crypto-key=", "-l=0"}, environment, &Config{RateLimit: 1, PollInterval: 4 * time.Second, ReportInterval: 5 * time.Second}},
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := parseInterval(tt.input, tt.defSeconds); got != tt.want {
-				t.Errorf("parseInterval(%q, %d) = %v, want %v", tt.input, tt.defSeconds, got, tt.want)
+			args := append([]string{"-c", path}, tt.args...)
+			got, err := getConfig(args, lookupEnvironment(tt.env))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("config = %#v, want %#v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestResolveString(t *testing.T) {
-	t.Run("flag wins", func(t *testing.T) {
-		got := resolveString(true, "flag", "ENV", "file", "def")
-		if got != "flag" {
-			t.Errorf("got %q, want flag", got)
-		}
-	})
-
-	t.Run("file beats default", func(t *testing.T) {
-		t.Setenv("UNUSED_ENV", "")
-		got := resolveString(false, "", "UNUSED_ENV", "file", "def")
-		if got != "file" {
-			t.Errorf("got %q, want file", got)
-		}
-	})
-}
-
-func TestResolveInt(t *testing.T) {
-	t.Run("flag wins", func(t *testing.T) {
-		fileVal := 99
-		got := resolveInt(true, 1, "ENV", &fileVal, 5)
-		if got != 1 {
-			t.Errorf("got %d, want 1", got)
-		}
-	})
-
-	t.Run("file beats default", func(t *testing.T) {
-		t.Setenv("UNUSED_ENV", "")
-		fileVal := 99
-		got := resolveInt(false, 0, "UNUSED_ENV", &fileVal, 5)
-		if got != 99 {
-			t.Errorf("got %d, want 99", got)
-		}
-	})
-
-	t.Run("default when no file", func(t *testing.T) {
-		t.Setenv("UNUSED_ENV", "")
-		got := resolveInt(false, 0, "UNUSED_ENV", nil, 5)
-		if got != 5 {
-			t.Errorf("got %d, want 5", got)
-		}
-	})
-}
-
-func TestLoadFileConfig(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "agent.json")
-	content := `{
-		"address": "localhost:9999",
-		"report_interval": "5s",
-		"poll_interval": "1s",
-		"crypto_key": "/keys/pub.pem",
-		"rate_limit": 7
-	}`
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-		t.Fatalf("failed to write config: %v", err)
+func TestGetConfigFileSelection(t *testing.T) {
+	envPath := writeConfig(t, `{"key":"env-file"}`)
+	flagPath := writeConfig(t, `{"key":"flag-file"}`)
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"CONFIG env", nil, "env-file"},
+		{"short flag", []string{"-c", flagPath}, "flag-file"},
+		{"long flag", []string{"-config", flagPath}, "flag-file"},
+		{"last alias wins", []string{"-c", envPath, "-config", flagPath}, "flag-file"},
+		{"empty short flag disables CONFIG", []string{"-c="}, ""},
+		{"empty long flag disables CONFIG", []string{"-config="}, ""},
 	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read config: %v", err)
-	}
-
-	var fc fileConfig
-	if err := json.Unmarshal(data, &fc); err != nil {
-		t.Fatalf("failed to unmarshal config: %v", err)
-	}
-
-	if fc.Address != "localhost:9999" {
-		t.Errorf("address = %q, want localhost:9999", fc.Address)
-	}
-	if fc.ReportInterval != "5s" {
-		t.Errorf("report_interval = %q, want 5s", fc.ReportInterval)
-	}
-	if fc.PollInterval != "1s" {
-		t.Errorf("poll_interval = %q, want 1s", fc.PollInterval)
-	}
-	if fc.CryptoKey != "/keys/pub.pem" {
-		t.Errorf("crypto_key = %q, want /keys/pub.pem", fc.CryptoKey)
-	}
-	if fc.RateLimit == nil || *fc.RateLimit != 7 {
-		t.Errorf("rate_limit = %v, want 7", fc.RateLimit)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := getConfig(tt.args, lookupEnvironment(map[string]string{"CONFIG": envPath}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Key != tt.want {
+				t.Fatalf("key = %q, want %q", got.Key, tt.want)
+			}
+		})
 	}
 }
 
-func TestFileConfig_Defaults(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "empty.json")
-	if err := os.WriteFile(path, []byte(`{}`), 0600); err != nil {
-		t.Fatalf("failed to write config: %v", err)
+func TestGetConfigErrors(t *testing.T) {
+	malformed := writeConfig(t, `{`)
+	wrongType := writeConfig(t, `{"rate_limit":"three"}`)
+	tests := []struct {
+		name string
+		args []string
+		env  map[string]string
+	}{
+		{"missing file", []string{"-c", filepath.Join(t.TempDir(), "missing")}, nil},
+		{"malformed JSON", []string{"-c", malformed}, nil},
+		{"wrong JSON type", []string{"-c", wrongType}, nil},
+		{"unknown flag", []string{"-unknown"}, nil},
+		{"invalid rate flag", []string{"-l=abc"}, nil},
+		{"invalid rate env", nil, map[string]string{"RATE_LIMIT": "abc"}},
+		{"invalid poll interval", []string{"-p=abc"}, nil},
+		{"invalid report interval", nil, map[string]string{"REPORT_INTERVAL": "abc"}},
+		{"zero poll interval", []string{"-p=0"}, nil},
+		{"negative poll interval", []string{"-p=-2s"}, nil},
+		{"zero report interval", nil, map[string]string{"REPORT_INTERVAL": "0"}},
+		{"negative report interval", nil, map[string]string{"REPORT_INTERVAL": "-2"}},
 	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read config: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got, err := getConfig(tt.args, lookupEnvironment(tt.env)); err == nil || got != nil {
+				t.Fatalf("config = %#v, error = %v; want nil config and error", got, err)
+			}
+		})
 	}
+}
 
-	var fc fileConfig
-	if err := json.Unmarshal(data, &fc); err != nil {
-		t.Fatalf("failed to unmarshal config: %v", err)
+func TestGetConfigIgnoresOverriddenInvalidEnvironment(t *testing.T) {
+	got, err := getConfig([]string{"-l=4", "-p=3s"}, lookupEnvironment(map[string]string{"RATE_LIMIT": "invalid", "POLL_INTERVAL": "invalid"}))
+	if err != nil || got.RateLimit != 4 || got.PollInterval != 3*time.Second {
+		t.Fatalf("config = %#v, error = %v", got, err)
 	}
+}
 
-	if fc.RateLimit != nil {
-		t.Errorf("rate_limit should be nil for empty config, got %v", *fc.RateLimit)
+func TestGetConfigExplicitEmptyFileValues(t *testing.T) {
+	path := writeConfig(t, `{"address":"","key":"","crypto_key":"","rate_limit":0}`)
+	got, err := getConfig([]string{"-c", path}, lookupEnvironment(nil))
+	if err != nil || !reflect.DeepEqual(got, &Config{RateLimit: 1, PollInterval: 2 * time.Second, ReportInterval: 10 * time.Second}) {
+		t.Fatalf("config = %#v, error = %v", got, err)
+	}
+}
+
+func TestGetConfigExplicitZeroIntervalOverridesPositiveValues(t *testing.T) {
+	path := writeConfig(t, `{"poll_interval":"3s"}`)
+	if got, err := getConfig([]string{"-c", path, "-p=0"}, lookupEnvironment(map[string]string{"POLL_INTERVAL": "4s"})); err == nil || got != nil {
+		t.Fatalf("config = %#v, error = %v; expected zero flag to override positive file/env and fail validation", got, err)
 	}
 }

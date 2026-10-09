@@ -3,19 +3,16 @@ package main
 import (
 	"context"
 	"crypto/rsa"
-	"encoding/json"
-	"flag"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
-	"sync"
 	"syscall"
 	"time"
 
 	"go-musthave-metrics/internal/buildinfo"
-	"go-musthave-metrics/internal/config/db"
+	serverconfig "go-musthave-metrics/internal/config/server"
 	"go-musthave-metrics/internal/crypto"
 	"go-musthave-metrics/internal/handler"
 	"go-musthave-metrics/internal/logger"
@@ -26,164 +23,19 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
-
-const (
-	defaultRunAddr       = ":8080"
-	defaultLogLevel      = "info"
-	defaultStoreInterval = 300
-	defaultRestore       = false
-)
-
-type fileConfig struct {
-	Address        string `json:"address"`
-	Restore        *bool  `json:"restore"`
-	StoreInterval  string `json:"store_interval"`
-	StoreFile      string `json:"store_file"`
-	DatabaseDSN    string `json:"database_dsn"`
-	CryptoKey      string `json:"crypto_key"`
-	Key            string `json:"key"`
-	LogLevel       string `json:"log_level"`
-	AuditFile      string `json:"audit_file"`
-	AuditURL       string `json:"audit_url"`
-}
-
-var (
-	flagRunAddr       string
-	flagLogLevel      string
-	flagStoreInterval int
-	flagFilePath      string
-	flagRestore       bool
-	flagDBDSN         string
-	flagKey           string
-	flagCryptoKey     string
-	flagAuditFile     string
-	flagAuditURL      string
-	flagConfig        string
-	filePathSet       bool
-)
-
-func parseFlags() error {
-	flag.StringVar(&flagRunAddr, "a", defaultRunAddr, "address and port to run server")
-	flag.StringVar(&flagLogLevel, "l", defaultLogLevel, "log level")
-	flag.IntVar(&flagStoreInterval, "i", defaultStoreInterval, "store interval in seconds")
-	flag.StringVar(&flagFilePath, "f", "", "path to metrics file")
-	flag.BoolVar(&flagRestore, "r", defaultRestore, "restore metrics from file")
-	flag.StringVar(&flagDBDSN, "d", "", "database DSN")
-	flag.StringVar(&flagKey, "k", "", "key for signing data")
-	flag.StringVar(&flagCryptoKey, "crypto-key", "", "path to private key file for decryption")
-	flag.StringVar(&flagAuditFile, "audit-file", "", "path to audit log file")
-	flag.StringVar(&flagAuditURL, "audit-url", "", "URL to send audit logs")
-	flag.StringVar(&flagConfig, "c", "", "path to JSON config file")
-	flag.StringVar(&flagConfig, "config", "", "path to JSON config file")
-	flag.Parse()
-
-	setFlags := map[string]bool{}
-	flag.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
-
-	// Путь к конфигурации: флаг -c/-config имеет приоритет над CONFIG.
-	cfgPath := flagConfig
-	if !setFlags["c"] && !setFlags["config"] {
-		if env, ok := os.LookupEnv("CONFIG"); ok && env != "" {
-			cfgPath = env
-		}
-	}
-
-	var fc fileConfig
-	if cfgPath != "" {
-		data, err := os.ReadFile(cfgPath)
-		if err != nil {
-			return fmt.Errorf("failed to read config file %s: %w", cfgPath, err)
-		}
-		if err := json.Unmarshal(data, &fc); err != nil {
-			return fmt.Errorf("failed to parse config file %s: %w", cfgPath, err)
-		}
-	}
-
-	if v, ok := os.LookupEnv("ADDRESS"); ok && v != "" {
-		flagRunAddr = v
-	} else if !setFlags["a"] && fc.Address != "" {
-		flagRunAddr = fc.Address
-	}
-
-	if v, ok := os.LookupEnv("LOG_LEVEL"); ok && v != "" {
-		flagLogLevel = v
-	} else if !setFlags["l"] && fc.LogLevel != "" {
-		flagLogLevel = fc.LogLevel
-	}
-
-	if v, ok := os.LookupEnv("STORE_INTERVAL"); ok && v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil {
-			return fmt.Errorf("invalid STORE_INTERVAL value: %s", v)
-		}
-		flagStoreInterval = n
-	} else if !setFlags["i"] && fc.StoreInterval != "" {
-		n, err := strconv.Atoi(fc.StoreInterval)
-		if err != nil {
-			return fmt.Errorf("invalid store_interval value in config: %s", fc.StoreInterval)
-		}
-		flagStoreInterval = n
-	}
-
-	if setFlags["f"] {
-		filePathSet = true
-	} else if v, ok := os.LookupEnv("FILE_STORAGE_PATH"); ok && v != "" {
-		flagFilePath = v
-		filePathSet = true
-	} else if fc.StoreFile != "" {
-		flagFilePath = fc.StoreFile
-		filePathSet = true
-	}
-
-	if v, ok := os.LookupEnv("RESTORE"); ok && v != "" {
-		flagRestore = v == "true"
-	} else if !setFlags["r"] && fc.Restore != nil {
-		flagRestore = *fc.Restore
-	}
-
-	if v, ok := os.LookupEnv("DATABASE_DSN"); ok && v != "" {
-		flagDBDSN = v
-	} else if !setFlags["d"] && fc.DatabaseDSN != "" {
-		flagDBDSN = fc.DatabaseDSN
-	}
-
-	if v, ok := os.LookupEnv("KEY"); ok && v != "" {
-		flagKey = v
-	} else if !setFlags["k"] && fc.Key != "" {
-		flagKey = fc.Key
-	}
-
-	if v, ok := os.LookupEnv("CRYPTO_KEY"); ok && v != "" {
-		flagCryptoKey = v
-	} else if !setFlags["crypto-key"] && fc.CryptoKey != "" {
-		flagCryptoKey = fc.CryptoKey
-	}
-
-	if v, ok := os.LookupEnv("AUDIT_FILE"); ok && v != "" {
-		flagAuditFile = v
-	} else if !setFlags["audit-file"] && fc.AuditFile != "" {
-		flagAuditFile = fc.AuditFile
-	}
-
-	if v, ok := os.LookupEnv("AUDIT_URL"); ok && v != "" {
-		flagAuditURL = v
-	} else if !setFlags["audit-url"] && fc.AuditURL != "" {
-		flagAuditURL = fc.AuditURL
-	}
-
-	return nil
-}
 
 func main() {
 	buildinfo.Print()
 
-	if err := parseFlags(); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+	cfg, err := serverconfig.GetConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 		return
 	}
 
-	log, err := logger.NewLogger(flagLogLevel)
+	log, err := logger.NewLogger(cfg.LogLevel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
 		return
@@ -193,34 +45,30 @@ func main() {
 	}()
 
 	var privateKey *rsa.PrivateKey
-	if flagCryptoKey != "" {
-		privateKey, err = crypto.LoadPrivateKey(flagCryptoKey)
+	if cfg.CryptoKey != "" {
+		privateKey, err = crypto.LoadPrivateKey(cfg.CryptoKey)
 		if err != nil {
 			log.Fatal("Failed to load private key", zap.Error(err))
 		}
-		log.Info("Private key loaded", zap.String("path", flagCryptoKey))
+		log.Info("Private key loaded", zap.String("path", cfg.CryptoKey))
 	}
-
-	dbConfig := db.NewConfig()
-	dbConfig.LoadFromEnv()
-	dbConfig.LoadFromFlags(flagDBDSN)
 
 	var storage repository.Storage
 	var dbConn *repository.PostgresStorage
 
-	if dbConfig.DSN != "" {
-		storage, err = repository.NewPostgresStorage(dbConfig.DSN)
+	if cfg.DatabaseDSN != "" {
+		storage, err = repository.NewPostgresStorage(cfg.DatabaseDSN)
 		if err != nil {
 			log.Fatal("Failed to connect to database", zap.Error(err))
 		}
 		dbConn = storage.(*repository.PostgresStorage)
 		log.Info("Connected to PostgreSQL")
-	} else if filePathSet && flagFilePath != "" {
-		storage = repository.NewMemStorage(flagFilePath)
-		if flagRestore {
-			log.Info("Metrics restored from file", zap.String("file", flagFilePath))
+	} else if cfg.FilePath != "" {
+		storage = repository.NewMemStorage(cfg.FilePath)
+		if cfg.Restore {
+			log.Info("Metrics restored from file", zap.String("file", cfg.FilePath))
 		}
-		log.Info("Using file storage", zap.String("file", flagFilePath))
+		log.Info("Using file storage", zap.String("file", cfg.FilePath))
 	} else {
 		storage = repository.NewMemStorage("")
 		log.Info("Using in-memory storage")
@@ -230,31 +78,31 @@ func main() {
 
 	auditService := audit.NewAuditService()
 
-	if flagAuditFile != "" {
-		fileObserver, err := audit.NewFileObserver(flagAuditFile)
+	if cfg.AuditFile != "" {
+		fileObserver, err := audit.NewFileObserver(cfg.AuditFile)
 		if err != nil {
 			log.Fatal("Failed to create file audit observer", zap.Error(err))
 		}
 		auditService.AddObserver(fileObserver)
-		log.Info("Audit to file enabled", zap.String("file", flagAuditFile))
+		log.Info("Audit to file enabled", zap.String("file", cfg.AuditFile))
 	}
 
-	if flagAuditURL != "" {
-		urlObserver := audit.NewURLObserver(flagAuditURL)
+	if cfg.AuditURL != "" {
+		urlObserver := audit.NewURLObserver(cfg.AuditURL)
 		auditService.AddObserver(urlObserver)
-		log.Info("Audit to URL enabled", zap.String("url", flagAuditURL))
+		log.Info("Audit to URL enabled", zap.String("url", cfg.AuditURL))
 	}
 
 	var syncFilePath string
-	if flagStoreInterval == 0 && flagFilePath != "" && dbConn == nil {
-		syncFilePath = flagFilePath
+	if cfg.StoreInterval == 0 && cfg.FilePath != "" && dbConn == nil {
+		syncFilePath = cfg.FilePath
 	}
 
 	metricsHandler := handler.NewMetricsHandler(
 		metricsService,
 		storage,
 		syncFilePath,
-		flagKey,
+		cfg.Key,
 		auditService,
 	)
 
@@ -277,7 +125,7 @@ func main() {
 
 	jsonRoutes := r.Group("/")
 	jsonRoutes.Use(middleware.Decrypt(privateKey))
-	jsonRoutes.Use(middleware.HashSHA256(flagKey))
+	jsonRoutes.Use(middleware.HashSHA256(cfg.Key))
 	{
 		jsonRoutes.POST("/update", metricsHandler.UpdateMetricJSONHandler)
 		jsonRoutes.POST("/update/", metricsHandler.UpdateMetricJSONHandler)
@@ -293,16 +141,17 @@ func main() {
 		r.GET("/ping", pingHandler.PingHandler)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	defer stop()
 
-	var storeWG sync.WaitGroup
-	if flagStoreInterval > 0 && flagFilePath != "" && dbConn == nil {
-		storeWG.Add(1)
-		go func(ctx context.Context) {
-			defer storeWG.Done()
+	storeCtx, stopStore := context.WithCancel(context.Background())
+	defer stopStore()
+	var storeGroup errgroup.Group
+
+	if cfg.StoreInterval > 0 && cfg.FilePath != "" && dbConn == nil {
+		storeGroup.Go(func() error {
 			ticker := time.NewTicker(
-				time.Duration(flagStoreInterval) * time.Second,
+				time.Duration(cfg.StoreInterval) * time.Second,
 			)
 			defer ticker.Stop()
 
@@ -312,65 +161,45 @@ func main() {
 					if err := storage.(*repository.MemStorage).SaveToFile(); err != nil {
 						log.Error(
 							"Failed to save metrics to file",
-							zap.String("file", flagFilePath),
+							zap.String("file", cfg.FilePath),
 							zap.Error(err),
 						)
 					} else {
 						log.Info(
 							"Metrics saved to file",
-							zap.String("file", flagFilePath),
+							zap.String("file", cfg.FilePath),
 						)
 					}
 
-				case <-ctx.Done():
+				case <-storeCtx.Done():
 					log.Info("Store ticker stopped")
-					return
+					return nil
 				}
 			}
-		}(ctx)
+		})
 	}
 
-	log.Info("Server starting", zap.String("address", flagRunAddr))
+	log.Info("Server starting", zap.String("address", cfg.Address))
 
 	server := &http.Server{
-		Addr:    flagRunAddr,
+		Addr:    cfg.Address,
 		Handler: r,
 	}
 
-	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal("Failed to start server", zap.Error(err))
-		}
-	}()
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
-	<-quit
-
-	log.Info("Shutting down server...")
-
-	ctxShutdown, cancelShutdown := context.WithTimeout(
-		context.Background(),
-		5*time.Second,
-	)
-	defer cancelShutdown()
-
-	if err := server.Shutdown(ctxShutdown); err != nil {
-		log.Error("Graceful shutdown timed out", zap.Error(err))
-		if closeErr := server.Close(); closeErr != nil {
-			log.Error("Failed to close server", zap.Error(closeErr))
-		}
+	if err := runHTTPServer(ctx, server); err != nil {
+		log.Error("Server stopped with an error", zap.Error(err))
 	}
 
-	cancel()
-
-	storeWG.Wait()
-	if flagFilePath != "" && dbConn == nil {
+	stopStore()
+	if err := storeGroup.Wait(); err != nil {
+		log.Error("Failed to stop metrics store", zap.Error(err))
+	}
+	if cfg.FilePath != "" && dbConn == nil {
 		if memStorage, ok := storage.(*repository.MemStorage); ok {
 			if err := memStorage.SaveToFile(); err != nil {
 				log.Error("Failed to save metrics on shutdown", zap.Error(err))
 			} else {
-				log.Info("Metrics saved on shutdown", zap.String("file", flagFilePath))
+				log.Info("Metrics saved on shutdown", zap.String("file", cfg.FilePath))
 			}
 		}
 	}
@@ -386,4 +215,27 @@ func main() {
 	}
 
 	log.Info("Server stopped")
+}
+
+func runHTTPServer(ctx context.Context, server *http.Server) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	group, serverCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		defer cancel()
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("serve HTTP: %w", err)
+		}
+		return nil
+	})
+	group.Go(func() error {
+		<-serverCtx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			return errors.Join(fmt.Errorf("shutdown HTTP: %w", err), server.Close())
+		}
+		return nil
+	})
+	return group.Wait()
 }
