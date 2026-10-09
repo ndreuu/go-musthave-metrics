@@ -127,6 +127,63 @@ func TestCollector_GetMetrics(t *testing.T) {
 	}
 }
 
+func TestCollector_DrainMetrics_ResetsPollCount(t *testing.T) {
+	collector := NewCollector()
+
+	collector.Collect()
+	collector.Collect()
+
+	metrics := collector.DrainMetrics()
+
+	var pollCount *Metric
+	for _, m := range metrics {
+		if m.Name == "PollCount" {
+			pollCount = m
+		}
+	}
+	if pollCount == nil {
+		t.Fatal("PollCount should be present in drained metrics")
+	}
+	if pollCount.Value != 2 {
+		t.Errorf("PollCount should be 2 after two collections, got %f", pollCount.Value)
+	}
+
+	metrics = collector.DrainMetrics()
+	for _, m := range metrics {
+		if m.Name == "PollCount" {
+			t.Fatalf("PollCount should not be drained after reset, got value %f", m.Value)
+		}
+	}
+}
+
+func TestCollector_DrainMetrics_AccumulatesBetweenDrains(t *testing.T) {
+	collector := NewCollector()
+
+	collector.Collect()
+	collector.Collect()
+	collector.DrainMetrics()
+
+	collector.Collect()
+	collector.Collect()
+	collector.Collect()
+
+	metrics := collector.DrainMetrics()
+
+	var pollCount *Metric
+	for _, m := range metrics {
+		if m.Name == "PollCount" {
+			pollCount = m
+		}
+	}
+	if pollCount == nil {
+		t.Fatal("PollCount should be present")
+	}
+	// После первого drain в 0, затем три сбора => 3.
+	if pollCount.Value != 3 {
+		t.Errorf("PollCount should be 3 after drain then three collections, got %f", pollCount.Value)
+	}
+}
+
 func TestCollector_CollectGopsutil(t *testing.T) {
 	collector := NewCollector()
 

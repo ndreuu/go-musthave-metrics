@@ -2,72 +2,120 @@ package agent
 
 import (
 	"flag"
+	"fmt"
+	"io"
 	"os"
-	"strconv"
 	"strings"
 	"time"
+
+	"go-musthave-metrics/internal/config"
+)
+
+const (
+	defaultServerAddress  = "localhost:8080"
+	defaultPollInterval   = "2"
+	defaultReportInterval = "10"
+	defaultRateLimit      = 2
 )
 
 // generate:reset
 type Config struct {
 	ServerAddress  string
 	Key            string
+	CryptoKey      string
 	PollInterval   time.Duration
 	ReportInterval time.Duration
 	RateLimit      int
 }
 
+type configSource struct {
+	Address        *string `json:"address" flag:"a" env:"ADDRESS"`
+	ReportInterval *string `json:"report_interval" flag:"r" env:"REPORT_INTERVAL"`
+	PollInterval   *string `json:"poll_interval" flag:"p" env:"POLL_INTERVAL"`
+	CryptoKey      *string `json:"crypto_key" flag:"crypto-key" env:"CRYPTO_KEY"`
+	Key            *string `json:"key" flag:"k" env:"KEY"`
+	RateLimit      *int    `json:"rate_limit" flag:"l" env:"RATE_LIMIT"`
+}
+
+// GetConfig loads defaults, a JSON file, environment and explicit CLI flags,
+// in that order of increasing priority.
+func GetConfig() (*Config, error) {
+	return loadConfig(flag.NewFlagSet("agent", flag.ExitOnError), os.Args[1:], os.LookupEnv)
+}
+
+// NewConfig is retained for callers of the previous API.
+// Deprecated: use GetConfig to handle configuration errors without a panic.
 func NewConfig() *Config {
-	var (
-		serverAddress  string
-		reportInterval int
-		pollInterval   int
-		key            string
-		rateLimit      int
-	)
+	cfg, err := GetConfig()
+	if err != nil {
+		panic(err)
+	}
+	return cfg
+}
 
-	flag.StringVar(&serverAddress, "a", "localhost:8080", "address of the server")
-	flag.IntVar(&reportInterval, "r", 10, "report interval in seconds")
-	flag.IntVar(&pollInterval, "p", 2, "poll interval in seconds")
-	flag.StringVar(&key, "k", "", "key for signing data")
-	flag.IntVar(&rateLimit, "l", 2, "rate limit (max concurrent requests)")
-	flag.Parse()
+func getConfig(args []string, lookup func(string) (string, bool)) (*Config, error) {
+	flags := flag.NewFlagSet("agent", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	return loadConfig(flags, args, lookup)
+}
 
-	if envAddr, ok := os.LookupEnv("ADDRESS"); ok && envAddr != "" {
-		serverAddress = envAddr
+func loadConfig(flags *flag.FlagSet, args []string, lookup func(string) (string, bool)) (*Config, error) {
+	cli := configSource{
+		Address:        flags.String("a", defaultServerAddress, "address of the server"),
+		ReportInterval: flags.String("r", defaultReportInterval, "report interval (seconds or Go duration)"),
+		PollInterval:   flags.String("p", defaultPollInterval, "poll interval (seconds or Go duration)"),
+		Key:            flags.String("k", "", "key for signing data"),
+		CryptoKey:      flags.String("crypto-key", "", "path to public key file for encryption"),
+		RateLimit:      flags.Int("l", defaultRateLimit, "rate limit (max concurrent requests)"),
 	}
-	if envReportInterval, ok := os.LookupEnv("REPORT_INTERVAL"); ok && envReportInterval != "" {
-		if interval, err := strconv.Atoi(envReportInterval); err == nil {
-			reportInterval = interval
-		}
+	var path string
+	flags.StringVar(&path, "c", "", "path to JSON config file")
+	flags.StringVar(&path, "config", "", "path to JSON config file")
+	if err := flags.Parse(args); err != nil {
+		return nil, err
 	}
-	if envPollInterval, ok := os.LookupEnv("POLL_INTERVAL"); ok && envPollInterval != "" {
-		if interval, err := strconv.Atoi(envPollInterval); err == nil {
-			pollInterval = interval
-		}
+	config.ExplicitFlags(&cli, flags)
+	var file configSource
+	if err := config.ReadFile(flags, path, lookup, &file); err != nil {
+		return nil, err
 	}
-	if envKey, ok := os.LookupEnv("KEY"); ok && envKey != "" {
-		key = envKey
+	env, err := config.Environment(lookup, cli)
+	if err != nil {
+		return nil, err
 	}
-	if envRateLimit, ok := os.LookupEnv("RATE_LIMIT"); ok && envRateLimit != "" {
-		if limit, err := strconv.Atoi(envRateLimit); err == nil {
-			rateLimit = limit
-		}
+	defaults := configSource{
+		Address: config.Pointer(defaultServerAddress), ReportInterval: config.Pointer(defaultReportInterval),
+		PollInterval: config.Pointer(defaultPollInterval), RateLimit: config.Pointer(defaultRateLimit),
+		Key: config.Pointer(""), CryptoKey: config.Pointer(""),
 	}
-
-	if rateLimit <= 0 {
-		rateLimit = 1
+	merged, err := config.Merge(defaults, file, env, cli)
+	if err != nil {
+		return nil, err
 	}
-
-	if serverAddress != "" && !strings.HasPrefix(serverAddress, "http://") && !strings.HasPrefix(serverAddress, "https://") {
-		serverAddress = "http://" + serverAddress
+	report, err := config.Duration(*merged.ReportInterval)
+	if err != nil {
+		return nil, fmt.Errorf("report interval: %w", err)
 	}
-
+	if report <= 0 {
+		return nil, fmt.Errorf("report interval must be positive: %q", *merged.ReportInterval)
+	}
+	poll, err := config.Duration(*merged.PollInterval)
+	if err != nil {
+		return nil, fmt.Errorf("poll interval: %w", err)
+	}
+	if poll <= 0 {
+		return nil, fmt.Errorf("poll interval must be positive: %q", *merged.PollInterval)
+	}
+	address := *merged.Address
+	if address != "" && !strings.HasPrefix(address, "http://") && !strings.HasPrefix(address, "https://") {
+		address = "http://" + address
+	}
+	rate := *merged.RateLimit
+	if rate <= 0 {
+		rate = 1
+	}
 	return &Config{
-		PollInterval:   time.Duration(pollInterval) * time.Second,
-		ReportInterval: time.Duration(reportInterval) * time.Second,
-		ServerAddress:  serverAddress,
-		Key:            key,
-		RateLimit:      rateLimit,
-	}
+		ServerAddress: address, Key: *merged.Key, CryptoKey: *merged.CryptoKey,
+		PollInterval: poll, ReportInterval: report, RateLimit: rate,
+	}, nil
 }

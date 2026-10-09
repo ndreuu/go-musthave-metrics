@@ -2,17 +2,18 @@ package main
 
 import (
 	"context"
-	"flag"
+	"crypto/rsa"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
 	"go-musthave-metrics/internal/buildinfo"
-	"go-musthave-metrics/internal/config/db"
+	serverconfig "go-musthave-metrics/internal/config/server"
+	"go-musthave-metrics/internal/crypto"
 	"go-musthave-metrics/internal/handler"
 	"go-musthave-metrics/internal/logger"
 	"go-musthave-metrics/internal/middleware"
@@ -22,81 +23,19 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
-
-var (
-	flagRunAddr       string
-	flagLogLevel      string
-	flagStoreInterval int
-	flagFilePath      string
-	flagRestore       bool
-	flagDBDSN         string
-	flagKey           string
-	flagAuditFile     string
-	flagAuditURL      string
-	filePathSet       bool
-)
-
-func parseFlags() error {
-	flag.StringVar(&flagRunAddr, "a", ":8080", "address and port to run server")
-	flag.StringVar(&flagLogLevel, "l", "info", "log level")
-	flag.IntVar(&flagStoreInterval, "i", 300, "store interval in seconds")
-	flag.StringVar(&flagFilePath, "f", "", "path to metrics file")
-	flag.BoolVar(&flagRestore, "r", false, "restore metrics from file")
-	flag.StringVar(&flagDBDSN, "d", "", "database DSN")
-	flag.StringVar(&flagKey, "k", "", "key for signing data")
-	flag.StringVar(&flagAuditFile, "audit-file", "", "path to audit log file")
-	flag.StringVar(&flagAuditURL, "audit-url", "", "URL to send audit logs")
-	flag.Parse()
-
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "f" {
-			filePathSet = true
-		}
-	})
-
-	if envAddr, ok := os.LookupEnv("ADDRESS"); ok && envAddr != "" {
-		flagRunAddr = envAddr
-	}
-	if envLogLevel, ok := os.LookupEnv("LOG_LEVEL"); ok && envLogLevel != "" {
-		flagLogLevel = envLogLevel
-	}
-	if envInterval, ok := os.LookupEnv("STORE_INTERVAL"); ok && envInterval != "" {
-		v, err := strconv.Atoi(envInterval)
-		if err != nil {
-			return fmt.Errorf("invalid STORE_INTERVAL value: %s", envInterval)
-		}
-		flagStoreInterval = v
-	}
-	if envPath, ok := os.LookupEnv("FILE_STORAGE_PATH"); ok && envPath != "" {
-		flagFilePath = envPath
-		filePathSet = true
-	}
-	if envRestore, ok := os.LookupEnv("RESTORE"); ok && envRestore != "" {
-		flagRestore = envRestore == "true"
-	}
-	if envKey, ok := os.LookupEnv("KEY"); ok && envKey != "" {
-		flagKey = envKey
-	}
-	if envAuditFile, ok := os.LookupEnv("AUDIT_FILE"); ok && envAuditFile != "" {
-		flagAuditFile = envAuditFile
-	}
-	if envAuditURL, ok := os.LookupEnv("AUDIT_URL"); ok && envAuditURL != "" {
-		flagAuditURL = envAuditURL
-	}
-
-	return nil
-}
 
 func main() {
 	buildinfo.Print()
 
-	if err := parseFlags(); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+	cfg, err := serverconfig.GetConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 		return
 	}
 
-	log, err := logger.NewLogger(flagLogLevel)
+	log, err := logger.NewLogger(cfg.LogLevel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
 		return
@@ -105,26 +44,31 @@ func main() {
 		_ = log.Sync()
 	}()
 
-	dbConfig := db.NewConfig()
-	dbConfig.LoadFromEnv()
-	dbConfig.LoadFromFlags(flagDBDSN)
+	var privateKey *rsa.PrivateKey
+	if cfg.CryptoKey != "" {
+		privateKey, err = crypto.LoadPrivateKey(cfg.CryptoKey)
+		if err != nil {
+			log.Fatal("Failed to load private key", zap.Error(err))
+		}
+		log.Info("Private key loaded", zap.String("path", cfg.CryptoKey))
+	}
 
 	var storage repository.Storage
 	var dbConn *repository.PostgresStorage
 
-	if dbConfig.DSN != "" {
-		storage, err = repository.NewPostgresStorage(dbConfig.DSN)
+	if cfg.DatabaseDSN != "" {
+		storage, err = repository.NewPostgresStorage(cfg.DatabaseDSN)
 		if err != nil {
 			log.Fatal("Failed to connect to database", zap.Error(err))
 		}
 		dbConn = storage.(*repository.PostgresStorage)
 		log.Info("Connected to PostgreSQL")
-	} else if filePathSet && flagFilePath != "" {
-		storage = repository.NewMemStorage(flagFilePath)
-		if flagRestore {
-			log.Info("Metrics restored from file", zap.String("file", flagFilePath))
+	} else if cfg.FilePath != "" {
+		storage = repository.NewMemStorage(cfg.FilePath)
+		if cfg.Restore {
+			log.Info("Metrics restored from file", zap.String("file", cfg.FilePath))
 		}
-		log.Info("Using file storage", zap.String("file", flagFilePath))
+		log.Info("Using file storage", zap.String("file", cfg.FilePath))
 	} else {
 		storage = repository.NewMemStorage("")
 		log.Info("Using in-memory storage")
@@ -134,31 +78,31 @@ func main() {
 
 	auditService := audit.NewAuditService()
 
-	if flagAuditFile != "" {
-		fileObserver, err := audit.NewFileObserver(flagAuditFile)
+	if cfg.AuditFile != "" {
+		fileObserver, err := audit.NewFileObserver(cfg.AuditFile)
 		if err != nil {
 			log.Fatal("Failed to create file audit observer", zap.Error(err))
 		}
 		auditService.AddObserver(fileObserver)
-		log.Info("Audit to file enabled", zap.String("file", flagAuditFile))
+		log.Info("Audit to file enabled", zap.String("file", cfg.AuditFile))
 	}
 
-	if flagAuditURL != "" {
-		urlObserver := audit.NewURLObserver(flagAuditURL)
+	if cfg.AuditURL != "" {
+		urlObserver := audit.NewURLObserver(cfg.AuditURL)
 		auditService.AddObserver(urlObserver)
-		log.Info("Audit to URL enabled", zap.String("url", flagAuditURL))
+		log.Info("Audit to URL enabled", zap.String("url", cfg.AuditURL))
 	}
 
 	var syncFilePath string
-	if flagStoreInterval == 0 && flagFilePath != "" && dbConn == nil {
-		syncFilePath = flagFilePath
+	if cfg.StoreInterval == 0 && cfg.FilePath != "" && dbConn == nil {
+		syncFilePath = cfg.FilePath
 	}
 
 	metricsHandler := handler.NewMetricsHandler(
 		metricsService,
 		storage,
 		syncFilePath,
-		flagKey,
+		cfg.Key,
 		auditService,
 	)
 
@@ -180,7 +124,8 @@ func main() {
 	r.GET("/", metricsHandler.ListMetricsHandler)
 
 	jsonRoutes := r.Group("/")
-	jsonRoutes.Use(middleware.HashSHA256(flagKey))
+	jsonRoutes.Use(middleware.Decrypt(privateKey))
+	jsonRoutes.Use(middleware.HashSHA256(cfg.Key))
 	{
 		jsonRoutes.POST("/update", metricsHandler.UpdateMetricJSONHandler)
 		jsonRoutes.POST("/update/", metricsHandler.UpdateMetricJSONHandler)
@@ -196,13 +141,17 @@ func main() {
 		r.GET("/ping", pingHandler.PingHandler)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	defer stop()
 
-	if flagStoreInterval > 0 && flagFilePath != "" && dbConn == nil {
-		go func(ctx context.Context) {
+	storeCtx, stopStore := context.WithCancel(context.Background())
+	defer stopStore()
+	var storeGroup errgroup.Group
+
+	if cfg.StoreInterval > 0 && cfg.FilePath != "" && dbConn == nil {
+		storeGroup.Go(func() error {
 			ticker := time.NewTicker(
-				time.Duration(flagStoreInterval) * time.Second,
+				time.Duration(cfg.StoreInterval) * time.Second,
 			)
 			defer ticker.Stop()
 
@@ -212,54 +161,48 @@ func main() {
 					if err := storage.(*repository.MemStorage).SaveToFile(); err != nil {
 						log.Error(
 							"Failed to save metrics to file",
-							zap.String("file", flagFilePath),
+							zap.String("file", cfg.FilePath),
 							zap.Error(err),
 						)
 					} else {
 						log.Info(
 							"Metrics saved to file",
-							zap.String("file", flagFilePath),
+							zap.String("file", cfg.FilePath),
 						)
 					}
 
-				case <-ctx.Done():
+				case <-storeCtx.Done():
 					log.Info("Store ticker stopped")
-					return
+					return nil
 				}
 			}
-		}(ctx)
+		})
 	}
 
-	log.Info("Server starting", zap.String("address", flagRunAddr))
+	log.Info("Server starting", zap.String("address", cfg.Address))
 
 	server := &http.Server{
-		Addr:    flagRunAddr,
+		Addr:    cfg.Address,
 		Handler: r,
 	}
 
-	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal("Failed to start server", zap.Error(err))
-		}
-	}()
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-
-	log.Info("Shutting down server...")
-
-	ctxShutdown, cancelShutdown := context.WithTimeout(
-		context.Background(),
-		5*time.Second,
-	)
-	defer cancelShutdown()
-
-	if err := server.Shutdown(ctxShutdown); err != nil {
-		log.Fatal("Server forced to shutdown", zap.Error(err))
+	if err := runHTTPServer(ctx, server); err != nil {
+		log.Error("Server stopped with an error", zap.Error(err))
 	}
 
-	cancel()
+	stopStore()
+	if err := storeGroup.Wait(); err != nil {
+		log.Error("Failed to stop metrics store", zap.Error(err))
+	}
+	if cfg.FilePath != "" && dbConn == nil {
+		if memStorage, ok := storage.(*repository.MemStorage); ok {
+			if err := memStorage.SaveToFile(); err != nil {
+				log.Error("Failed to save metrics on shutdown", zap.Error(err))
+			} else {
+				log.Info("Metrics saved on shutdown", zap.String("file", cfg.FilePath))
+			}
+		}
+	}
 
 	if err := auditService.Close(); err != nil {
 		log.Error("Failed to close audit service", zap.Error(err))
@@ -272,4 +215,27 @@ func main() {
 	}
 
 	log.Info("Server stopped")
+}
+
+func runHTTPServer(ctx context.Context, server *http.Server) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	group, serverCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		defer cancel()
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("serve HTTP: %w", err)
+		}
+		return nil
+	})
+	group.Go(func() error {
+		<-serverCtx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			return errors.Join(fmt.Errorf("shutdown HTTP: %w", err), server.Close())
+		}
+		return nil
+	})
+	return group.Wait()
 }
