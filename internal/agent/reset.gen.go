@@ -26,6 +26,7 @@ func (rs *Config) Reset() {
 	}
 	rs.ServerAddress = ""
 	rs.Key = ""
+	rs.CryptoKey = ""
 	rs.PollInterval = 0
 	rs.ReportInterval = 0
 	rs.RateLimit = 0

@@ -3,13 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
-	"go-musthave-metrics/internal/agent"
-	"log"
-	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
+
+	"go-musthave-metrics/internal/agent"
+	"go-musthave-metrics/internal/logger"
+
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -18,141 +20,128 @@ var (
 	buildCommit  string
 )
 
-func printBuildInfo() {
-	version := buildVersion
-	if version == "" {
-		version = "N/A"
+func printBuildInfo(log *zap.Logger) {
+	value := func(s string) string {
+		if s == "" {
+			return "N/A"
+		}
+		return s
 	}
-	date := buildDate
-	if date == "" {
-		date = "N/A"
-	}
-	commit := buildCommit
-	if commit == "" {
-		commit = "N/A"
-	}
-
-	fmt.Printf("Build version: %s\n", version)
-	fmt.Printf("Build date: %s\n", date)
-	fmt.Printf("Build commit: %s\n", commit)
+	log.Info("Build version: " + value(buildVersion))
+	log.Info("Build date: " + value(buildDate))
+	log.Info("Build commit: " + value(buildCommit))
 }
 
 func main() {
-	printBuildInfo()
+	log, err := logger.NewLogger("info")
+	if err != nil {
+		panic(err)
+	}
+	defer func() { _ = log.Sync() }()
+	printBuildInfo(log)
 
-	cfg := agent.NewConfig()
-
-	collector := agent.NewCollector()
-	sender := agent.NewSender(cfg.ServerAddress, cfg.Key)
-
-	fmt.Printf("Agent starting with configuration:\n")
-	fmt.Printf("  Poll Interval: %v\n", cfg.PollInterval)
-	fmt.Printf("  Report Interval: %v\n", cfg.ReportInterval)
-	fmt.Printf("  Server Address: %s\n", cfg.ServerAddress)
-	fmt.Printf("  Rate Limit: %d\n", cfg.RateLimit)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	var wg sync.WaitGroup
-
-	metricChan := make(chan *agent.Metric, cfg.RateLimit*2)
-
-	for i := 0; i < cfg.RateLimit; i++ {
-		wg.Add(1)
-		go func(workerId int) {
-			defer wg.Done()
-			for {
-				select {
-				case metric, ok := <-metricChan:
-					if !ok {
-						return
-					}
-					if err := sender.Send(metric); err != nil {
-						log.Printf("Worker %d: Error sending metric %s: %v", workerId, metric.Name, err)
-					}
-				case <-ctx.Done():
-					return
-				}
-			}
-		}(i)
+	cfg, err := agent.GetConfig()
+	if err != nil {
+		log.Error("Failed to load configuration", zap.Error(err))
+		return
 	}
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		ticker := time.NewTicker(cfg.PollInterval)
-		defer ticker.Stop()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	defer stop()
 
-		for {
-			select {
-			case <-ticker.C:
-				collector.Collect()
-				fmt.Printf("[%s] Runtime metrics collected\n", time.Now().Format(time.RFC3339))
-			case <-ctx.Done():
-				fmt.Println("Runtime collector shutting down")
-				return
+	log.Info("Agent starting",
+		zap.Duration("poll_interval", cfg.PollInterval),
+		zap.Duration("report_interval", cfg.ReportInterval),
+		zap.String("server_address", cfg.ServerAddress),
+		zap.Int("rate_limit", cfg.RateLimit),
+		zap.String("crypto_key", cfg.CryptoKey),
+	)
+	collector := agent.NewCollector()
+	sender := agent.NewSender(cfg.ServerAddress, cfg.Key, cfg.CryptoKey)
+	if err := runAgent(ctx, cfg, collector, sender, log); err != nil {
+		log.Error("Agent stopped with an error", zap.Error(err))
+		return
+	}
+	log.Info("Agent stopped")
+}
+
+type metricsCollector interface {
+	Collect()
+	CollectGopsutil()
+	DrainMetrics() []*agent.Metric
+}
+
+type metricSender interface {
+	Send(*agent.Metric) error
+}
+
+func runAgent(ctx context.Context, cfg *agent.Config, collector metricsCollector, sender metricSender, log *zap.Logger) error {
+	var collectors errgroup.Group
+	collectors.Go(func() error {
+		return pollMetrics(ctx, cfg.PollInterval, collector.Collect, "Runtime", log)
+	})
+	collectors.Go(func() error {
+		return pollMetrics(ctx, cfg.PollInterval, collector.CollectGopsutil, "Gopsutil", log)
+	})
+
+	metricChan := make(chan *agent.Metric, cfg.RateLimit*2)
+	var pipeline errgroup.Group
+	for workerID := 0; workerID < cfg.RateLimit; workerID++ {
+		pipeline.Go(func() error {
+			var firstErr error
+			for metric := range metricChan {
+				if err := sender.Send(metric); err != nil {
+					log.Error("Failed to send metric", zap.Int("worker", workerID), zap.String("metric", metric.Name), zap.Error(err))
+					if firstErr == nil {
+						firstErr = fmt.Errorf("send metric %s: %w", metric.Name, err)
+					}
+				}
 			}
-		}
-	}()
+			return firstErr
+		})
+	}
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		ticker := time.NewTicker(cfg.PollInterval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ticker.C:
-				collector.CollectGopsutil()
-				fmt.Printf("[%s] Gopsutil metrics collected\n", time.Now().Format(time.RFC3339))
-			case <-ctx.Done():
-				fmt.Println("Gopsutil collector shutting down")
-				return
-			}
-		}
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	pipeline.Go(func() error {
 		defer close(metricChan)
-
 		ticker := time.NewTicker(cfg.ReportInterval)
 		defer ticker.Stop()
 
+		enqueue := func() {
+			metrics := collector.DrainMetrics()
+			for _, metric := range metrics {
+				metricChan <- metric
+			}
+			log.Debug("Metrics queued", zap.Int("count", len(metrics)))
+		}
 		for {
 			select {
-			case <-ticker.C:
-				metrics := collector.GetMetrics()
-				if len(metrics) > 0 {
-					for _, metric := range metrics {
-						select {
-						case metricChan <- metric:
-						case <-ctx.Done():
-							fmt.Println("Sender shutting down")
-							return
-						}
-					}
-					fmt.Printf("[%s] Sent %d metrics to worker pool\n", time.Now().Format(time.RFC3339), len(metrics))
-				}
 			case <-ctx.Done():
-				fmt.Println("Sender shutting down")
-				return
+				log.Info("Shutting down agent")
+				if err := collectors.Wait(); err != nil {
+					return err
+				}
+				enqueue()
+				return nil
+			case <-ticker.C:
+				enqueue()
 			}
 		}
-	}()
+	})
 
-	fmt.Println("Agent is running. Press Ctrl+C to stop.")
+	return pipeline.Wait()
+}
 
-	<-sigChan
-	fmt.Println("\nShutting down agent...")
-	cancel()
-
-	wg.Wait()
-	fmt.Println("Agent stopped")
+func pollMetrics(ctx context.Context, interval time.Duration, collect func(), name string, log *zap.Logger) error {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			log.Debug("Collector stopped", zap.String("collector", name))
+			return nil
+		case <-ticker.C:
+			collect()
+			log.Debug("Metrics collected", zap.String("collector", name))
+		}
+	}
 }
