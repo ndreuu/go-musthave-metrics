@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"time"
 
@@ -22,6 +23,7 @@ type Config struct {
 	CryptoKey     string
 	AuditFile     string
 	AuditURL      string
+	TrustedSubnet string
 }
 
 type configSource struct {
@@ -35,6 +37,7 @@ type configSource struct {
 	CryptoKey     *string `json:"crypto_key" flag:"crypto-key" env:"CRYPTO_KEY"`
 	AuditFile     *string `json:"audit_file" flag:"audit-file" env:"AUDIT_FILE"`
 	AuditURL      *string `json:"audit_url" flag:"audit-url" env:"AUDIT_URL"`
+	TrustedSubnet *string `json:"trusted_subnet" flag:"t" env:"TRUSTED_SUBNET"`
 }
 
 // GetConfig loads defaults, JSON, CLI and environment, in increasing priority.
@@ -61,6 +64,7 @@ func loadConfig(flags *flag.FlagSet, args []string, lookup func(string) (string,
 		CryptoKey:     flags.String("crypto-key", "", "path to private key file for decryption"),
 		AuditFile:     flags.String("audit-file", "", "path to audit log file"),
 		AuditURL:      flags.String("audit-url", "", "URL to send audit logs"),
+		TrustedSubnet: flags.String("t", "", "trusted agent subnet in CIDR notation"),
 	}
 	var path string
 	flags.StringVar(&path, "c", "", "path to JSON config file")
@@ -81,6 +85,7 @@ func loadConfig(flags *flag.FlagSet, args []string, lookup func(string) (string,
 		Address: config.Pointer(":8080"), LogLevel: config.Pointer("info"), StoreInterval: config.Pointer("300"),
 		FilePath: config.Pointer(""), Restore: config.Pointer(false), DatabaseDSN: config.Pointer(""),
 		Key: config.Pointer(""), CryptoKey: config.Pointer(""), AuditFile: config.Pointer(""), AuditURL: config.Pointer(""),
+		TrustedSubnet: config.Pointer(""),
 	}
 	merged, err := config.Merge(defaults, file, cli, env)
 	if err != nil {
@@ -93,9 +98,15 @@ func loadConfig(flags *flag.FlagSet, args []string, lookup func(string) (string,
 	if interval%time.Second != 0 {
 		return nil, fmt.Errorf("store interval must be a whole number of seconds: %q", *merged.StoreInterval)
 	}
+	if *merged.TrustedSubnet != "" {
+		if _, _, err := net.ParseCIDR(*merged.TrustedSubnet); err != nil {
+			return nil, fmt.Errorf("trusted subnet: %w", err)
+		}
+	}
 	return &Config{
 		Address: *merged.Address, LogLevel: *merged.LogLevel, StoreInterval: int(interval / time.Second),
 		FilePath: *merged.FilePath, Restore: *merged.Restore, DatabaseDSN: *merged.DatabaseDSN,
 		Key: *merged.Key, CryptoKey: *merged.CryptoKey, AuditFile: *merged.AuditFile, AuditURL: *merged.AuditURL,
+		TrustedSubnet: *merged.TrustedSubnet,
 	}, nil
 }

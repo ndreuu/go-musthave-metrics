@@ -16,12 +16,10 @@ import (
 	"go-musthave-metrics/internal/crypto"
 	"go-musthave-metrics/internal/handler"
 	"go-musthave-metrics/internal/logger"
-	"go-musthave-metrics/internal/middleware"
 	"go-musthave-metrics/internal/repository"
 	"go-musthave-metrics/internal/service"
 	"go-musthave-metrics/internal/service/audit"
 
-	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -111,34 +109,9 @@ func main() {
 		pingHandler = handler.NewPingHandler(dbConn)
 	}
 
-	r := gin.New()
-	r.RedirectTrailingSlash = false
-
-	r.Use(gin.Recovery())
-	r.Use(middleware.RequestLogger(log))
-	r.Use(middleware.GzipUnmarshal())
-	r.Use(middleware.Gzip())
-
-	r.POST("/update/:type/:name/:value", metricsHandler.UpdateMetricHandler)
-	r.GET("/value/:type/:name", metricsHandler.GetMetricHandler)
-	r.GET("/", metricsHandler.ListMetricsHandler)
-
-	jsonRoutes := r.Group("/")
-	jsonRoutes.Use(middleware.Decrypt(privateKey))
-	jsonRoutes.Use(middleware.HashSHA256(cfg.Key))
-	{
-		jsonRoutes.POST("/update", metricsHandler.UpdateMetricJSONHandler)
-		jsonRoutes.POST("/update/", metricsHandler.UpdateMetricJSONHandler)
-
-		jsonRoutes.POST("/updates", metricsHandler.UpdateMetricsBatchHandler)
-		jsonRoutes.POST("/updates/", metricsHandler.UpdateMetricsBatchHandler)
-
-		jsonRoutes.POST("/value", metricsHandler.GetMetricJSONHandler)
-		jsonRoutes.POST("/value/", metricsHandler.GetMetricJSONHandler)
-	}
-
-	if pingHandler != nil {
-		r.GET("/ping", pingHandler.PingHandler)
+	r, routerErr := newRouter(cfg, log, privateKey, metricsHandler, pingHandler)
+	if routerErr != nil {
+		log.Fatal("Failed to configure HTTP router", zap.Error(routerErr))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)

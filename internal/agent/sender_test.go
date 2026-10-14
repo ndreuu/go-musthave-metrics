@@ -4,8 +4,10 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -397,4 +399,173 @@ func TestSender_SendBatch_ServerError(t *testing.T) {
 	err := sender.SendBatch(metrics)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "server returned status 500")
+}
+
+func TestSender_RealIPHeader(t *testing.T) {
+	for _, network := range []struct {
+		name    string
+		address string
+	}{
+		{name: "tcp4", address: "127.0.0.1:0"},
+		{name: "tcp6", address: "[::1]:0"},
+	} {
+		t.Run(network.name, func(t *testing.T) {
+			listener, err := net.Listen(network.name, network.address)
+			if err != nil {
+				if network.name == "tcp6" {
+					t.Skipf("IPv6 loopback is unavailable: %v", err)
+				}
+				t.Fatal(err)
+			}
+
+			type receivedRequest struct {
+				path       string
+				realIP     string
+				remoteAddr string
+			}
+			requests := make(chan receivedRequest, 3)
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				requests <- receivedRequest{
+					path:       r.URL.Path,
+					realIP:     r.Header.Get("X-Real-IP"),
+					remoteAddr: r.RemoteAddr,
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			_ = server.Listener.Close()
+			server.Listener = listener
+			server.Start()
+			defer server.Close()
+
+			sender := NewSender(server.URL, "", "")
+			defer sender.client.CloseIdleConnections()
+			metric := &Metric{MType: "gauge", Name: "RealIP", Value: 1}
+			calls := []struct {
+				send func() error
+				path string
+			}{
+				{path: "/update", send: func() error { return sender.Send(metric) }},
+				{path: "/updates/", send: func() error { return sender.SendBatch([]*Metric{metric}) }},
+				{path: "/update", send: func() error { return sender.Send(metric) }},
+			}
+			var firstRemoteAddr string
+			for _, call := range calls {
+				if err := call.send(); err != nil {
+					t.Fatal(err)
+				}
+				request := <-requests
+				host, _, err := net.SplitHostPort(request.remoteAddr)
+				if err != nil {
+					t.Fatal(err)
+				}
+				assert.Equal(t, call.path, request.path)
+				assert.Equal(t, host, request.realIP, "header must contain the actual connection's local IP")
+				if firstRemoteAddr == "" {
+					firstRemoteAddr = request.remoteAddr
+				} else {
+					assert.Equal(t, firstRemoteAddr, request.remoteAddr, "request should reuse the existing connection")
+				}
+			}
+		})
+	}
+}
+
+func TestSender_RealIPHeader_ClientRequestCopies(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		redirectStatus int
+	}{
+		{name: "userinfo"},
+		{name: "307 redirect", redirectStatus: http.StatusTemporaryRedirect},
+		{name: "308 redirect", redirectStatus: http.StatusPermanentRedirect},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, batch := range []bool{false, true} {
+				name := "single"
+				if batch {
+					name = "batch"
+				}
+				t.Run(name, func(t *testing.T) {
+					type receivedRequest struct {
+						path       string
+						method     string
+						realIP     string
+						remoteAddr string
+						username   string
+						password   string
+						hasAuth    bool
+					}
+					requests := make(chan receivedRequest, 2)
+					receive := func(r *http.Request) {
+						_, _ = io.Copy(io.Discard, r.Body)
+						username, password, hasAuth := r.BasicAuth()
+						requests <- receivedRequest{
+							path:       r.URL.Path,
+							method:     r.Method,
+							realIP:     r.Header.Get("X-Real-IP"),
+							remoteAddr: r.RemoteAddr,
+							username:   username,
+							password:   password,
+							hasAuth:    hasAuth,
+						}
+					}
+					target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						receive(r)
+						w.WriteHeader(http.StatusOK)
+					}))
+					defer target.Close()
+
+					address := target.URL
+					requestCount := 1
+					if test.redirectStatus != 0 {
+						origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							receive(r)
+							http.Redirect(w, r, target.URL+r.URL.Path, test.redirectStatus)
+						}))
+						defer origin.Close()
+						address = origin.URL
+						requestCount = 2
+					} else {
+						serverURL, err := url.Parse(address)
+						if err != nil {
+							t.Fatal(err)
+						}
+						serverURL.User = url.UserPassword("agent", "password")
+						address = serverURL.String()
+					}
+
+					sender := NewSender(address, "", "")
+					defer sender.client.CloseIdleConnections()
+					metric := &Metric{MType: "gauge", Name: "RealIP", Value: 1}
+					path := "/update"
+					var err error
+					if batch {
+						path = "/updates/"
+						err = sender.SendBatch([]*Metric{metric})
+					} else {
+						err = sender.Send(metric)
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					for range requestCount {
+						request := <-requests
+						host, _, err := net.SplitHostPort(request.remoteAddr)
+						if err != nil {
+							t.Fatal(err)
+						}
+						assert.Equal(t, path, request.path)
+						assert.Equal(t, http.MethodPost, request.method)
+						assert.Equal(t, host, request.realIP, "every request must carry its actual connection IP")
+						if test.redirectStatus == 0 {
+							assert.True(t, request.hasAuth)
+							assert.Equal(t, "agent", request.username)
+							assert.Equal(t, "password", request.password)
+						}
+					}
+				})
+			}
+		})
+	}
 }
