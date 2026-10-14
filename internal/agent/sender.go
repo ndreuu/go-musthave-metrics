@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptrace"
+	"net/netip"
 	"strconv"
 	"time"
 
@@ -37,7 +39,8 @@ func NewSender(serverAddress string, key string, cryptoKey string) *Sender {
 	s := &Sender{
 		serverAddress: serverAddress,
 		client: &http.Client{
-			Timeout: requestTimeout,
+			Timeout:   requestTimeout,
+			Transport: &realIPTransport{transport: http.DefaultTransport},
 		},
 		key: key,
 	}
@@ -62,6 +65,32 @@ func calculateHash(data []byte, key string) string {
 	h.Write(data)
 	h.Write([]byte(key))
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// realIPTransport добавляет IP интерфейса, выбранного для каждого соединения,
+// включая запросы после перенаправления или добавления Basic Auth клиентом.
+type realIPTransport struct {
+	transport http.RoundTripper
+}
+
+func (t *realIPTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// RoundTripper не должен менять заголовки исходного запроса.
+	req = req.Clone(req.Context())
+	trace := &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) {
+			addr, err := netip.ParseAddrPort(info.Conn.LocalAddr().String())
+			if err == nil {
+				req.Header.Set("X-Real-IP", addr.Addr().WithZone("").String())
+			}
+		},
+	}
+	return t.transport.RoundTrip(req.WithContext(httptrace.WithClientTrace(req.Context(), trace)))
+}
+
+func (t *realIPTransport) CloseIdleConnections() {
+	if transport, ok := t.transport.(interface{ CloseIdleConnections() }); ok {
+		transport.CloseIdleConnections()
+	}
 }
 
 // Send отправляет одну метрику на сервер с использованием retry.
