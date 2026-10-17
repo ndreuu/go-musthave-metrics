@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -15,10 +17,11 @@ import (
 	serverconfig "go-musthave-metrics/internal/config/server"
 	pb "go-musthave-metrics/internal/proto"
 	"go-musthave-metrics/internal/service"
+	"go-musthave-metrics/internal/testutil"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 )
 
@@ -52,18 +55,33 @@ func waitGRPCLifecycleResult(t *testing.T, result <-chan error, description stri
 	}
 }
 
+func lifecycleTLS(t *testing.T) (grpc.ServerOption, grpc.DialOption) {
+	t.Helper()
+	certFile, keyFile := testutil.NewTLSFiles(t)
+	serverCredentials, err := credentials.NewServerTLSFromFile(certFile, keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientCredentials, err := credentials.NewClientTLSFromFile(certFile, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return grpc.Creds(serverCredentials), grpc.WithTransportCredentials(clientCredentials)
+}
+
 func TestRunGRPCServerWaitsForActiveRequest(t *testing.T) {
 	listener := listenGRPCLifecycle(t)
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var releaseOnce sync.Once
-	server := grpc.NewServer()
+	serverTLS, clientTLS := lifecycleTLS(t)
+	server := grpc.NewServer(serverTLS)
 	pb.RegisterMetricsServer(server, &lifecycleMetricsServer{
 		update: func(ctx context.Context, _ *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
 			close(started)
 			select {
 			case <-release:
-				return &pb.UpdateMetricsResponse{}, nil
+				return pb.UpdateMetricsResponse_builder{}.Build(), nil
 			case <-ctx.Done():
 				return nil, status.FromContextError(ctx.Err()).Err()
 			}
@@ -77,7 +95,7 @@ func TestRunGRPCServerWaitsForActiveRequest(t *testing.T) {
 	})
 	stopped := make(chan error, 1)
 	go func() { stopped <- runGRPCServer(ctx, server, listener) }()
-	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(listener.Addr().String(), clientTLS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +104,7 @@ func TestRunGRPCServerWaitsForActiveRequest(t *testing.T) {
 	defer cancelRPC()
 	requestDone := make(chan error, 1)
 	go func() {
-		_, err := pb.NewMetricsClient(conn).UpdateMetrics(rpcCtx, &pb.UpdateMetricsRequest{})
+		_, err := pb.NewMetricsClient(conn).UpdateMetrics(rpcCtx, pb.UpdateMetricsRequest_builder{}.Build())
 		requestDone <- err
 	}()
 	select {
@@ -129,13 +147,14 @@ func TestShutdownGRPCServerBoundsHandlerIgnoringCancellation(t *testing.T) {
 	release := make(chan struct{})
 	handlerDone := make(chan struct{})
 	var releaseOnce sync.Once
-	server := grpc.NewServer()
+	serverTLS, clientTLS := lifecycleTLS(t)
+	server := grpc.NewServer(serverTLS)
 	pb.RegisterMetricsServer(server, &lifecycleMetricsServer{
 		update: func(context.Context, *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
 			close(started)
 			defer close(handlerDone)
 			<-release
-			return &pb.UpdateMetricsResponse{}, nil
+			return pb.UpdateMetricsResponse_builder{}.Build(), nil
 		},
 	})
 	served := make(chan error, 1)
@@ -149,7 +168,7 @@ func TestShutdownGRPCServerBoundsHandlerIgnoringCancellation(t *testing.T) {
 		go func() { server.GracefulStop(); finished <- nil }()
 		_ = waitGRPCLifecycleResult(t, finished, "released handler shutdown")
 	})
-	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(listener.Addr().String(), clientTLS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +177,7 @@ func TestShutdownGRPCServerBoundsHandlerIgnoringCancellation(t *testing.T) {
 	defer cancelRPC()
 	requestDone := make(chan error, 1)
 	go func() {
-		_, err := pb.NewMetricsClient(conn).UpdateMetrics(rpcCtx, &pb.UpdateMetricsRequest{})
+		_, err := pb.NewMetricsClient(conn).UpdateMetrics(rpcCtx, pb.UpdateMetricsRequest_builder{}.Build())
 		requestDone <- err
 	}()
 	select {
@@ -226,7 +245,8 @@ func TestAgentGRPCBatchUsesSharedStorageAndTrustedSubnet(t *testing.T) {
 		{name: "empty subnet", allow: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &serverconfig.Config{TrustedSubnet: tt.subnet}
+			certFile, keyFile := testutil.NewTLSFiles(t)
+			cfg := &serverconfig.Config{TrustedSubnet: tt.subnet, GRPCCertFile: certFile, GRPCKeyFile: keyFile}
 			router, storage := testRouter(t, cfg)
 			if err := storage.SetGauge(context.Background(), "Alloc", 1); err != nil {
 				t.Fatal(err)
@@ -243,7 +263,7 @@ func TestAgentGRPCBatchUsesSharedStorageAndTrustedSubnet(t *testing.T) {
 			t.Cleanup(func() { cancel(); server.Stop() })
 			stopped := make(chan error, 1)
 			go func() { stopped <- runGRPCServer(ctx, server, listener) }()
-			sender, err := agent.NewGRPCSender(listener.Addr().String())
+			sender, err := agent.NewGRPCSender(listener.Addr().String(), certFile)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -290,5 +310,41 @@ func TestNewGRPCServerRejectsInvalidTrustedSubnet(t *testing.T) {
 	server, err := newGRPCServer(&serverconfig.Config{TrustedSubnet: "invalid"}, nil, nil)
 	if server != nil || err == nil {
 		t.Fatalf("invalid subnet server = %v, error = %v; want nil server and error", server, err)
+	}
+}
+
+func TestNewGRPCServerRequiresValidTLSFiles(t *testing.T) {
+	certFile, keyFile := testutil.NewTLSFiles(t)
+	_, otherKeyFile := testutil.NewTLSFiles(t)
+	invalidFile := filepath.Join(t.TempDir(), "invalid.pem")
+	if err := os.WriteFile(invalidFile, []byte("not a PEM certificate"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name string
+		cert string
+		key  string
+	}{
+		{name: "no credentials"},
+		{name: "missing certificate", key: keyFile},
+		{name: "missing key", cert: certFile},
+		{name: "unreadable certificate", cert: filepath.Join(t.TempDir(), "missing.pem"), key: keyFile},
+		{name: "invalid certificate", cert: invalidFile, key: keyFile},
+		{name: "invalid key", cert: certFile, key: invalidFile},
+		{name: "mismatched key", cert: certFile, key: otherKeyFile},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, err := newGRPCServer(&serverconfig.Config{
+				GRPCCertFile: test.cert,
+				GRPCKeyFile:  test.key,
+			}, nil, nil)
+			if server != nil {
+				server.Stop()
+				t.Fatal("server accepted invalid TLS configuration")
+			}
+			if err == nil || !strings.Contains(err.Error(), "TLS") {
+				t.Fatalf("error = %v, want a TLS configuration error", err)
+			}
+		})
 	}
 }

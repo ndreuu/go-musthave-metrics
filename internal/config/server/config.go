@@ -14,6 +14,8 @@ import (
 type Config struct {
 	Address       string
 	GRPCAddress   string
+	GRPCCertFile  string
+	GRPCKeyFile   string
 	LogLevel      string
 	StoreInterval int
 	FilePath      string
@@ -29,6 +31,8 @@ type Config struct {
 type configSource struct {
 	Address       *string `json:"address" flag:"a" env:"ADDRESS"`
 	GRPCAddress   *string `json:"grpc_address" flag:"grpc-address" env:"GRPC_ADDRESS"`
+	GRPCCertFile  *string `json:"grpc_cert_file" flag:"grpc-cert-file" env:"GRPC_CERT_FILE"`
+	GRPCKeyFile   *string `json:"grpc_key_file" flag:"grpc-key-file" env:"GRPC_KEY_FILE"`
 	LogLevel      *string `json:"log_level" flag:"l" env:"LOG_LEVEL"`
 	StoreInterval *string `json:"store_interval" flag:"i" env:"STORE_INTERVAL"`
 	FilePath      *string `json:"store_file" flag:"f" env:"FILE_STORAGE_PATH"`
@@ -51,6 +55,8 @@ func loadConfig(flags *flag.FlagSet, args []string, lookup func(string) (string,
 	cli := configSource{
 		Address:       flags.String("a", ":8080", "address and port to run server"),
 		GRPCAddress:   flags.String("grpc-address", "", "gRPC listen address; empty disables gRPC"),
+		GRPCCertFile:  flags.String("grpc-cert-file", "", "path to gRPC TLS certificate file"),
+		GRPCKeyFile:   flags.String("grpc-key-file", "", "path to gRPC TLS private key file"),
 		LogLevel:      flags.String("l", "info", "log level"),
 		StoreInterval: flags.String("i", "300", "store interval (seconds or Go duration)"),
 		FilePath:      flags.String("f", "", "path to metrics file"),
@@ -81,7 +87,7 @@ func loadConfig(flags *flag.FlagSet, args []string, lookup func(string) (string,
 		Address: config.Pointer(":8080"), LogLevel: config.Pointer("info"), StoreInterval: config.Pointer("300"),
 		FilePath: config.Pointer(""), Restore: config.Pointer(false), DatabaseDSN: config.Pointer(""),
 		Key: config.Pointer(""), CryptoKey: config.Pointer(""), AuditFile: config.Pointer(""), AuditURL: config.Pointer(""),
-		TrustedSubnet: config.Pointer(""), GRPCAddress: config.Pointer(""),
+		TrustedSubnet: config.Pointer(""), GRPCAddress: config.Pointer(""), GRPCCertFile: config.Pointer(""), GRPCKeyFile: config.Pointer(""),
 	}
 	merged, err := config.Merge(defaults, file, cli, env)
 	if err != nil {
@@ -101,6 +107,7 @@ func loadConfig(flags *flag.FlagSet, args []string, lookup func(string) (string,
 	}
 	return &Config{
 		Address: *merged.Address, GRPCAddress: *merged.GRPCAddress, LogLevel: *merged.LogLevel, StoreInterval: int(interval / time.Second),
+		GRPCCertFile: *merged.GRPCCertFile, GRPCKeyFile: *merged.GRPCKeyFile,
 		FilePath: *merged.FilePath, Restore: *merged.Restore, DatabaseDSN: *merged.DatabaseDSN,
 		Key: *merged.Key, CryptoKey: *merged.CryptoKey, AuditFile: *merged.AuditFile, AuditURL: *merged.AuditURL,
 		TrustedSubnet: *merged.TrustedSubnet,

@@ -36,31 +36,33 @@ func (s *MetricsServer) UpdateMetrics(ctx context.Context, req *proto.UpdateMetr
 		return nil, status.Error(codes.InvalidArgument, "metrics request is missing")
 	}
 
-	metrics := make([]models.Metrics, len(req.Metrics))
-	for i, metric := range req.Metrics {
-		if metric == nil || metric.Id == "" {
+	requestMetrics := req.GetMetrics()
+	metrics := make([]models.Metrics, len(requestMetrics))
+	for i, metric := range requestMetrics {
+		id := metric.GetId()
+		if id == "" {
 			return nil, status.Errorf(codes.InvalidArgument, "metric %d must have an ID", i)
 		}
-		metrics[i].ID = metric.Id
-		switch metric.Type {
+		metrics[i].ID = id
+		switch metric.GetType() {
 		case proto.Metric_GAUGE:
-			if math.IsNaN(metric.Value) || math.IsInf(metric.Value, 0) {
-				return nil, status.Errorf(codes.InvalidArgument, "gauge metric %q must have a finite value", metric.Id)
+			value := metric.GetValue()
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				return nil, status.Errorf(codes.InvalidArgument, "gauge metric %q must have a finite value", id)
 			}
-			value := metric.Value
 			metrics[i].MType = models.Gauge
 			metrics[i].Value = &value
 		case proto.Metric_COUNTER:
-			delta := metric.Delta
+			delta := metric.GetDelta()
 			metrics[i].MType = models.Counter
 			metrics[i].Delta = &delta
 		default:
-			return nil, status.Errorf(codes.InvalidArgument, "metric %q has an unknown type", metric.Id)
+			return nil, status.Errorf(codes.InvalidArgument, "metric %q has an unknown type", id)
 		}
 	}
 
 	if len(metrics) == 0 {
-		return &proto.UpdateMetricsResponse{}, nil
+		return proto.UpdateMetricsResponse_builder{}.Build(), nil
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, status.FromContextError(err).Err()
@@ -89,5 +91,5 @@ func (s *MetricsServer) UpdateMetrics(ctx context.Context, req *proto.UpdateMetr
 		})
 	}
 
-	return &proto.UpdateMetricsResponse{}, nil
+	return proto.UpdateMetricsResponse_builder{}.Build(), nil
 }

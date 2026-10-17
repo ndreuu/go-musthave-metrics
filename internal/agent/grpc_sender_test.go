@@ -2,14 +2,20 @@ package agent
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"math"
 	"net"
 	"net/netip"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	pb "go-musthave-metrics/internal/proto"
+	"go-musthave-metrics/internal/testutil"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -28,7 +34,7 @@ func (s *testGRPCSenderService) UpdateMetrics(ctx context.Context, request *pb.U
 	return s.update(ctx, request)
 }
 
-func startGRPCSenderTestServer(t *testing.T, network, address string, update func(context.Context, *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error)) string {
+func startGRPCSenderTestServer(t *testing.T, network, address string, update func(context.Context, *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error)) (string, string) {
 	t.Helper()
 	listener, err := net.Listen(network, address)
 	if err != nil {
@@ -37,7 +43,12 @@ func startGRPCSenderTestServer(t *testing.T, network, address string, update fun
 		}
 		t.Fatalf("listen: %v", err)
 	}
-	server := grpc.NewServer()
+	certFile, keyFile := testutil.NewTLSFiles(t)
+	serverCredentials, err := credentials.NewServerTLSFromFile(certFile, keyFile)
+	if err != nil {
+		t.Fatalf("server TLS credentials: %v", err)
+	}
+	server := grpc.NewServer(grpc.Creds(serverCredentials))
 	pb.RegisterMetricsServer(server, &testGRPCSenderService{update: update})
 	done := make(chan struct{})
 	go func() {
@@ -48,12 +59,12 @@ func startGRPCSenderTestServer(t *testing.T, network, address string, update fun
 		server.Stop()
 		<-done
 	})
-	return listener.Addr().String()
+	return listener.Addr().String(), certFile
 }
 
-func newGRPCSenderForTest(t *testing.T, address string) *GRPCSender {
+func newGRPCSenderForTest(t *testing.T, address, caFile string) *GRPCSender {
 	t.Helper()
-	sender, err := NewGRPCSender(address)
+	sender, err := NewGRPCSender(address, caFile)
 	if err != nil {
 		t.Fatalf("create sender: %v", err)
 	}
@@ -74,6 +85,10 @@ func checkGRPCSenderRealIP(ctx context.Context) error {
 	if !ok {
 		return status.Error(codes.InvalidArgument, "missing connection peer")
 	}
+	tlsInfo, ok := remote.AuthInfo.(credentials.TLSInfo)
+	if !ok || tlsInfo.State.Version < tls.VersionTLS12 {
+		return status.Error(codes.Unauthenticated, "TLS 1.2 or newer is required")
+	}
 	remoteIP, err := netip.ParseAddrPort(remote.Addr.String())
 	if err != nil || actual.Unmap() != remoteIP.Addr().WithZone("").Unmap() {
 		return status.Errorf(codes.InvalidArgument, "x-real-ip %s does not match peer %s", actual, remote.Addr)
@@ -84,7 +99,7 @@ func checkGRPCSenderRealIP(ctx context.Context) error {
 func TestGRPCSenderSendBatch(t *testing.T) {
 	requests := make(chan *pb.UpdateMetricsRequest, 2)
 	deadlines := make(chan time.Duration, 2)
-	address := startGRPCSenderTestServer(t, "tcp4", "127.0.0.1:0", func(ctx context.Context, request *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
+	address, caFile := startGRPCSenderTestServer(t, "tcp4", "127.0.0.1:0", func(ctx context.Context, request *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
 		if err := checkGRPCSenderRealIP(ctx); err != nil {
 			return nil, err
 		}
@@ -94,9 +109,9 @@ func TestGRPCSenderSendBatch(t *testing.T) {
 		}
 		deadlines <- time.Until(deadline)
 		requests <- request
-		return &pb.UpdateMetricsResponse{}, nil
+		return pb.UpdateMetricsResponse_builder{}.Build(), nil
 	})
-	sender := newGRPCSenderForTest(t, address)
+	sender := newGRPCSenderForTest(t, address, caFile)
 	metrics := []*Metric{
 		{Name: "Alloc", MType: "gauge", Value: 123.456},
 		{Name: "PollCount", MType: "counter", Value: 42},
@@ -106,21 +121,21 @@ func TestGRPCSenderSendBatch(t *testing.T) {
 		t.Fatalf("send batch: %v", err)
 	}
 	request := <-requests
-	if len(request.Metrics) != len(metrics) {
-		t.Fatalf("received %d metrics, want %d", len(request.Metrics), len(metrics))
+	if len(request.GetMetrics()) != len(metrics) {
+		t.Fatalf("received %d metrics, want %d", len(request.GetMetrics()), len(metrics))
 	}
 	for i, metric := range metrics {
-		got := request.Metrics[i]
-		if got.Id != metric.Name {
-			t.Errorf("metric %d: name = %q, want %q", i, got.Id, metric.Name)
+		got := request.GetMetrics()[i]
+		if got.GetId() != metric.Name {
+			t.Errorf("metric %d: name = %q, want %q", i, got.GetId(), metric.Name)
 		}
 		switch metric.MType {
 		case "gauge":
-			if got.Type != pb.Metric_GAUGE || got.Value != metric.Value || got.Delta != 0 {
+			if got.GetType() != pb.Metric_GAUGE || got.GetValue() != metric.Value || got.GetDelta() != 0 {
 				t.Errorf("gauge mapping: %v", got)
 			}
 		case "counter":
-			if got.Type != pb.Metric_COUNTER || got.Delta != int64(metric.Value) || got.Value != 0 {
+			if got.GetType() != pb.Metric_COUNTER || got.GetDelta() != int64(metric.Value) || got.GetValue() != 0 {
 				t.Errorf("counter mapping: %v", got)
 			}
 		}
@@ -147,15 +162,15 @@ func TestGRPCSenderRealIPConcurrentAndReusedConnection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			const calls = 16
 			peers := make(chan string, calls)
-			address := startGRPCSenderTestServer(t, tt.network, tt.address, func(ctx context.Context, request *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
+			address, caFile := startGRPCSenderTestServer(t, tt.network, tt.address, func(ctx context.Context, request *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
 				if err := checkGRPCSenderRealIP(ctx); err != nil {
 					return nil, err
 				}
 				remote, _ := peer.FromContext(ctx)
 				peers <- remote.Addr.String()
-				return &pb.UpdateMetricsResponse{}, nil
+				return pb.UpdateMetricsResponse_builder{}.Build(), nil
 			})
-			sender := newGRPCSenderForTest(t, address)
+			sender := newGRPCSenderForTest(t, address, caFile)
 			var wg sync.WaitGroup
 			errors := make(chan error, calls)
 			for range calls {
@@ -185,11 +200,11 @@ func TestGRPCSenderRealIPConcurrentAndReusedConnection(t *testing.T) {
 
 func TestGRPCSenderRejectsInvalidBatchWithoutRPC(t *testing.T) {
 	requests := make(chan struct{}, 32)
-	address := startGRPCSenderTestServer(t, "tcp4", "127.0.0.1:0", func(context.Context, *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
+	address, caFile := startGRPCSenderTestServer(t, "tcp4", "127.0.0.1:0", func(context.Context, *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
 		requests <- struct{}{}
-		return &pb.UpdateMetricsResponse{}, nil
+		return pb.UpdateMetricsResponse_builder{}.Build(), nil
 	})
-	sender := newGRPCSenderForTest(t, address)
+	sender := newGRPCSenderForTest(t, address, caFile)
 	for _, tt := range []struct {
 		metric *Metric
 		name   string
@@ -222,10 +237,10 @@ func TestGRPCSenderRejectsInvalidBatchWithoutRPC(t *testing.T) {
 }
 
 func TestGRPCSenderPreservesStatusError(t *testing.T) {
-	address := startGRPCSenderTestServer(t, "tcp4", "127.0.0.1:0", func(context.Context, *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
+	address, caFile := startGRPCSenderTestServer(t, "tcp4", "127.0.0.1:0", func(context.Context, *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
 		return nil, status.Error(codes.PermissionDenied, "untrusted subnet")
 	})
-	sender := newGRPCSenderForTest(t, address)
+	sender := newGRPCSenderForTest(t, address, caFile)
 	err := sender.SendBatch([]*Metric{{Name: "Alloc", MType: "gauge", Value: 1}})
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("status = %s, want PermissionDenied; error: %v", status.Code(err), err)
@@ -233,10 +248,10 @@ func TestGRPCSenderPreservesStatusError(t *testing.T) {
 }
 
 func TestGRPCSenderClose(t *testing.T) {
-	address := startGRPCSenderTestServer(t, "tcp4", "127.0.0.1:0", func(context.Context, *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
-		return &pb.UpdateMetricsResponse{}, nil
+	address, caFile := startGRPCSenderTestServer(t, "tcp4", "127.0.0.1:0", func(context.Context, *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
+		return pb.UpdateMetricsResponse_builder{}.Build(), nil
 	})
-	sender, err := NewGRPCSender(address)
+	sender, err := NewGRPCSender(address, caFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,9 +268,88 @@ func TestGRPCSenderClose(t *testing.T) {
 
 func TestNewGRPCSenderEmptyAddress(t *testing.T) {
 	for _, address := range []string{"", "   "} {
-		if sender, err := NewGRPCSender(address); err == nil || sender != nil {
+		if sender, err := NewGRPCSender(address, ""); err == nil || sender != nil {
 			t.Errorf("address %q: sender = %v, error = %v", address, sender, err)
 		}
+	}
+}
+
+func TestNewGRPCSenderInvalidCAFile(t *testing.T) {
+	invalidCA := filepath.Join(t.TempDir(), "invalid.pem")
+	if err := os.WriteFile(invalidCA, []byte("not a certificate"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, caFile := range []string{filepath.Join(t.TempDir(), "missing.pem"), invalidCA} {
+		if sender, err := NewGRPCSender("localhost:8081", caFile); err == nil || sender != nil {
+			t.Errorf("CA file %q: sender = %v, error = %v", caFile, sender, err)
+		}
+	}
+}
+
+func TestGRPCSenderRejectsUntrustedCertificate(t *testing.T) {
+	address, _ := startGRPCSenderTestServer(t, "tcp4", "127.0.0.1:0", func(context.Context, *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
+		t.Error("untrusted connection must not invoke the service")
+		return pb.UpdateMetricsResponse_builder{}.Build(), nil
+	})
+	unrelatedCA, _ := testutil.NewTLSFiles(t)
+	for _, tt := range []struct {
+		name   string
+		caFile string
+	}{
+		{name: "system roots"},
+		{name: "unrelated CA", caFile: unrelatedCA},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			sender := newGRPCSenderForTest(t, address, tt.caFile)
+			err := sender.SendBatch([]*Metric{{Name: "Alloc", MType: "gauge", Value: 1}})
+			if status.Code(err) != codes.Unavailable || !strings.Contains(err.Error(), "certificate") {
+				t.Fatalf("expected certificate verification failure, got %v", err)
+			}
+		})
+	}
+}
+
+func TestLocalIPCredentialsRejectsWrongHostname(t *testing.T) {
+	address, caFile := startGRPCSenderTestServer(t, "tcp4", "127.0.0.1:0", func(context.Context, *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
+		t.Error("invalid hostname must not invoke the service")
+		return pb.UpdateMetricsResponse_builder{}.Build(), nil
+	})
+	certPEM, err := os.ReadFile(caFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(certPEM) {
+		t.Fatal("invalid test certificate")
+	}
+	transport := localIPCredentials{TransportCredentials: credentials.NewTLS(&tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    roots,
+	})}
+	conn, err := net.DialTimeout("tcp", address, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, _, err := transport.ClientHandshake(ctx, "wrong.example:443", conn); err == nil || !strings.Contains(err.Error(), "wrong.example") {
+		t.Fatalf("expected hostname verification failure, got %v", err)
+	}
+}
+
+func TestGRPCSenderValidatesPerRPCAuthority(t *testing.T) {
+	address, caFile := startGRPCSenderTestServer(t, "tcp4", "127.0.0.1:0", func(ctx context.Context, _ *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
+		return pb.UpdateMetricsResponse_builder{}.Build(), checkGRPCSenderRealIP(ctx)
+	})
+	sender := newGRPCSenderForTest(t, address, caFile)
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+	if _, err := sender.client.UpdateMetrics(ctx, pb.UpdateMetricsRequest_builder{}.Build(), grpc.CallAuthority("localhost")); err != nil {
+		t.Fatalf("valid authority: %v", err)
+	}
+	if _, err := sender.client.UpdateMetrics(ctx, pb.UpdateMetricsRequest_builder{}.Build(), grpc.CallAuthority("wrong.example")); status.Code(err) != codes.Unavailable {
+		t.Fatalf("expected rejection of unverified authority, got %v", err)
 	}
 }
 
@@ -268,7 +362,7 @@ func TestRealIPCredentialsMissingConnectionInfo(t *testing.T) {
 			t.Error("missing connection IP must return an error")
 		}
 	}
-	if (realIPCredentials{}).RequireTransportSecurity() {
-		t.Error("real IP metadata must support the configured insecure transport")
+	if !(realIPCredentials{}).RequireTransportSecurity() {
+		t.Error("real IP metadata must require TLS")
 	}
 }

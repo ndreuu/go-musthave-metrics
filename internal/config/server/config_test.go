@@ -82,6 +82,53 @@ func TestGetConfigGRPCAddressWrongJSONType(t *testing.T) {
 	}
 }
 
+func TestGetConfigGRPCTLSFiles(t *testing.T) {
+	path := writeConfig(t, `{"grpc_cert_file":"file-cert.pem","grpc_key_file":"file-key.pem"}`)
+	emptyPath := writeConfig(t, `{"grpc_cert_file":"","grpc_key_file":""}`)
+	env := map[string]string{"GRPC_CERT_FILE": "env-cert.pem", "GRPC_KEY_FILE": "env-key.pem"}
+	tests := []struct {
+		name     string
+		args     []string
+		env      map[string]string
+		wantCert string
+		wantKey  string
+	}{
+		{name: "default"},
+		{name: "JSON file", args: []string{"-c", path}, wantCert: "file-cert.pem", wantKey: "file-key.pem"},
+		{name: "CLI flags", args: []string{"-grpc-cert-file", "flag-cert.pem", "-grpc-key-file", "flag-key.pem"}, wantCert: "flag-cert.pem", wantKey: "flag-key.pem"},
+		{name: "environment", env: env, wantCert: "env-cert.pem", wantKey: "env-key.pem"},
+		{name: "flags override file", args: []string{"-c", path, "-grpc-cert-file", "flag-cert.pem", "-grpc-key-file", "flag-key.pem"}, wantCert: "flag-cert.pem", wantKey: "flag-key.pem"},
+		{name: "environment overrides file", args: []string{"-c", path}, env: env, wantCert: "env-cert.pem", wantKey: "env-key.pem"},
+		{name: "environment overrides flags and file", args: []string{"-c", path, "-grpc-cert-file", "flag-cert.pem", "-grpc-key-file", "flag-key.pem"}, env: env, wantCert: "env-cert.pem", wantKey: "env-key.pem"},
+		{name: "empty JSON values", args: []string{"-c", emptyPath}},
+		{name: "empty flags override file", args: []string{"-c", path, "-grpc-cert-file=", "-grpc-key-file="}},
+		{name: "environment overrides empty flags", args: []string{"-c", path, "-grpc-cert-file=", "-grpc-key-file="}, env: env, wantCert: "env-cert.pem", wantKey: "env-key.pem"},
+		{name: "empty environment is absent", args: []string{"-c", path}, env: map[string]string{"GRPC_CERT_FILE": "", "GRPC_KEY_FILE": ""}, wantCert: "file-cert.pem", wantKey: "file-key.pem"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := getConfig(tt.args, lookupEnvironment(tt.env))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.GRPCCertFile != tt.wantCert || got.GRPCKeyFile != tt.wantKey {
+				t.Fatalf("gRPC TLS files = (%q, %q), want (%q, %q)", got.GRPCCertFile, got.GRPCKeyFile, tt.wantCert, tt.wantKey)
+			}
+		})
+	}
+}
+
+func TestGetConfigGRPCTLSFilesWrongJSONType(t *testing.T) {
+	for _, name := range []string{"grpc_cert_file", "grpc_key_file"} {
+		t.Run(name, func(t *testing.T) {
+			path := writeConfig(t, `{"`+name+`":true}`)
+			if got, err := getConfig([]string{"-c", path}, lookupEnvironment(nil)); err == nil || got != nil {
+				t.Fatalf("config = %#v, error = %v; want nil config and error", got, err)
+			}
+		})
+	}
+}
+
 func TestGetConfigSourcePriority(t *testing.T) {
 	path := writeConfig(t, `{"address":"file:8080","log_level":"debug","store_interval":"10","store_file":"file.json","restore":true,"database_dsn":"file-dsn","key":"file-key","crypto_key":"file.pem","audit_file":"file.audit","audit_url":"https://file"}`)
 	environment := map[string]string{

@@ -60,7 +60,7 @@ func main() {
 	collector := agent.NewCollector()
 	var sender metricSender
 	if cfg.GRPCAddress != "" {
-		grpcSender, senderErr := agent.NewGRPCSender(cfg.GRPCAddress)
+		grpcSender, senderErr := agent.NewGRPCSender(cfg.GRPCAddress, cfg.GRPCCAFile)
 		if senderErr != nil {
 			log.Error("Failed to initialize gRPC sender", zap.Error(senderErr))
 			return

@@ -21,6 +21,7 @@ const (
 type Config struct {
 	ServerAddress  string
 	GRPCAddress    string
+	GRPCCAFile     string
 	Key            string
 	CryptoKey      string
 	PollInterval   time.Duration
@@ -31,6 +32,7 @@ type Config struct {
 type configSource struct {
 	Address        *string `json:"address" flag:"a" env:"ADDRESS"`
 	GRPCAddress    *string `json:"grpc_address" flag:"grpc-address" env:"GRPC_ADDRESS"`
+	GRPCCAFile     *string `json:"grpc_ca_file" flag:"grpc-ca-file" env:"GRPC_CA_FILE"`
 	ReportInterval *string `json:"report_interval" flag:"r" env:"REPORT_INTERVAL"`
 	PollInterval   *string `json:"poll_interval" flag:"p" env:"POLL_INTERVAL"`
 	CryptoKey      *string `json:"crypto_key" flag:"crypto-key" env:"CRYPTO_KEY"`
@@ -48,6 +50,7 @@ func loadConfig(flags *flag.FlagSet, args []string, lookup func(string) (string,
 	cli := configSource{
 		Address:        flags.String("a", defaultServerAddress, "address of the server"),
 		GRPCAddress:    flags.String("grpc-address", "", "gRPC server address; empty selects HTTP"),
+		GRPCCAFile:     flags.String("grpc-ca-file", "", "path to gRPC trusted CA certificate; empty uses system roots"),
 		ReportInterval: flags.String("r", defaultReportInterval, "report interval (seconds or Go duration)"),
 		PollInterval:   flags.String("p", defaultPollInterval, "poll interval (seconds or Go duration)"),
 		Key:            flags.String("k", "", "key for signing data"),
@@ -72,7 +75,7 @@ func loadConfig(flags *flag.FlagSet, args []string, lookup func(string) (string,
 	defaults := configSource{
 		Address: config.Pointer(defaultServerAddress), ReportInterval: config.Pointer(defaultReportInterval),
 		PollInterval: config.Pointer(defaultPollInterval), RateLimit: config.Pointer(defaultRateLimit),
-		Key: config.Pointer(""), CryptoKey: config.Pointer(""), GRPCAddress: config.Pointer(""),
+		Key: config.Pointer(""), CryptoKey: config.Pointer(""), GRPCAddress: config.Pointer(""), GRPCCAFile: config.Pointer(""),
 	}
 	merged, err := config.Merge(defaults, file, env, cli)
 	if err != nil {
@@ -101,7 +104,7 @@ func loadConfig(flags *flag.FlagSet, args []string, lookup func(string) (string,
 		rate = 1
 	}
 	return &Config{
-		ServerAddress: address, GRPCAddress: *merged.GRPCAddress, Key: *merged.Key, CryptoKey: *merged.CryptoKey,
+		ServerAddress: address, GRPCAddress: *merged.GRPCAddress, GRPCCAFile: *merged.GRPCCAFile, Key: *merged.Key, CryptoKey: *merged.CryptoKey,
 		PollInterval: poll, ReportInterval: report, RateLimit: rate,
 	}, nil
 }

@@ -13,16 +13,19 @@ import (
 
 func newRouter(cfg *serverconfig.Config, log *zap.Logger, privateKey *rsa.PrivateKey,
 	metricsHandler *handler.MetricsHandler, pingHandler *handler.PingHandler) (*gin.Engine, error) {
-	checkSubnet, err := middleware.TrustedSubnet(cfg.TrustedSubnet)
-	if err != nil {
-		return nil, err
-	}
-
 	r := gin.New()
 	r.RedirectTrailingSlash = false
 	r.Use(gin.Recovery(), middleware.RequestLogger(log))
 
-	updates := r.Group("/", checkSubnet, middleware.GzipUnmarshal(), middleware.Gzip())
+	updates := r.Group("/")
+	if cfg.TrustedSubnet != "" {
+		checkSubnet, err := middleware.TrustedSubnet(cfg.TrustedSubnet)
+		if err != nil {
+			return nil, err
+		}
+		updates.Use(checkSubnet)
+	}
+	updates.Use(middleware.GzipUnmarshal(), middleware.Gzip())
 	updates.POST("/update/:type/:name/:value", metricsHandler.UpdateMetricHandler)
 	jsonUpdates := updates.Group("/", middleware.Decrypt(privateKey), middleware.HashSHA256(cfg.Key))
 	jsonUpdates.POST("/update", metricsHandler.UpdateMetricJSONHandler)

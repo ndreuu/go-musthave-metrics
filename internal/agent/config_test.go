@@ -81,6 +81,46 @@ func TestGetConfigGRPCAddressWrongJSONType(t *testing.T) {
 	}
 }
 
+func TestGetConfigGRPCCAFile(t *testing.T) {
+	path := writeConfig(t, `{"grpc_ca_file":"file-ca.pem"}`)
+	emptyPath := writeConfig(t, `{"grpc_ca_file":""}`)
+	tests := []struct {
+		name string
+		args []string
+		env  map[string]string
+		want string
+	}{
+		{name: "default uses system roots"},
+		{name: "JSON file", args: []string{"-c", path}, want: "file-ca.pem"},
+		{name: "CLI flag", args: []string{"-grpc-ca-file", "flag-ca.pem"}, want: "flag-ca.pem"},
+		{name: "environment", env: map[string]string{"GRPC_CA_FILE": "env-ca.pem"}, want: "env-ca.pem"},
+		{name: "flag overrides file", args: []string{"-c", path, "-grpc-ca-file", "flag-ca.pem"}, want: "flag-ca.pem"},
+		{name: "environment overrides file", args: []string{"-c", path}, env: map[string]string{"GRPC_CA_FILE": "env-ca.pem"}, want: "env-ca.pem"},
+		{name: "flag overrides environment and file", args: []string{"-c", path, "-grpc-ca-file", "flag-ca.pem"}, env: map[string]string{"GRPC_CA_FILE": "env-ca.pem"}, want: "flag-ca.pem"},
+		{name: "empty JSON value", args: []string{"-c", emptyPath}},
+		{name: "empty flag overrides environment and file", args: []string{"-c", path, "-grpc-ca-file="}, env: map[string]string{"GRPC_CA_FILE": "env-ca.pem"}},
+		{name: "empty environment is absent", args: []string{"-c", path}, env: map[string]string{"GRPC_CA_FILE": ""}, want: "file-ca.pem"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := getConfig(tt.args, lookupEnvironment(tt.env))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.GRPCCAFile != tt.want {
+				t.Fatalf("gRPC CA file = %q, want %q", got.GRPCCAFile, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetConfigGRPCCAFileWrongJSONType(t *testing.T) {
+	path := writeConfig(t, `{"grpc_ca_file":true}`)
+	if got, err := getConfig([]string{"-c", path}, lookupEnvironment(nil)); err == nil || got != nil {
+		t.Fatalf("config = %#v, error = %v; want nil config and error", got, err)
+	}
+}
+
 func TestGetConfigSourcePriority(t *testing.T) {
 	path := writeConfig(t, `{"address":"file:8080","key":"file-key","crypto_key":"file.pem","poll_interval":"1s","report_interval":"1m","rate_limit":3}`)
 	file := &Config{ServerAddress: "http://file:8080", Key: "file-key", CryptoKey: "file.pem", PollInterval: time.Second, ReportInterval: time.Minute, RateLimit: 3}

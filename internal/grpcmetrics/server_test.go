@@ -16,10 +16,11 @@ import (
 	"go-musthave-metrics/internal/repository"
 	"go-musthave-metrics/internal/service"
 	"go-musthave-metrics/internal/service/audit"
+	"go-musthave-metrics/internal/testutil"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
@@ -61,16 +62,17 @@ func TestUpdateMetricsBatch(t *testing.T) {
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-real-ip", "192.0.2.10"))
 
 	for _, req := range []*proto.UpdateMetricsRequest{
-		{Metrics: []*proto.Metric{
-			{Id: "temperature", Type: proto.Metric_GAUGE, Value: 23.5},
-			{Id: "requests", Type: proto.Metric_COUNTER, Delta: 3},
-			{Id: "requests", Type: proto.Metric_COUNTER, Delta: 2},
-			{Id: "zero", Type: proto.Metric_GAUGE},
-		}},
-		{Metrics: []*proto.Metric{
-			{Id: "temperature", Type: proto.Metric_GAUGE, Value: -1},
-			{Id: "requests", Type: proto.Metric_COUNTER, Delta: -1},
-		}},
+		proto.UpdateMetricsRequest_builder{Metrics: []*proto.Metric{
+			proto.Metric_builder{Id: "temperature", Type: proto.Metric_GAUGE, Value: 23.5}.Build(),
+			proto.Metric_builder{Id: "requests", Type: proto.Metric_COUNTER, Delta: 3}.Build(),
+			proto.Metric_builder{Id: "requests", Type: proto.Metric_COUNTER, Delta: 2}.Build(),
+			proto.Metric_builder{Id: "zero", Type: proto.Metric_GAUGE}.Build(),
+			proto.Metric_builder{Id: "zeroCounter", Type: proto.Metric_COUNTER}.Build(),
+		}}.Build(),
+		proto.UpdateMetricsRequest_builder{Metrics: []*proto.Metric{
+			proto.Metric_builder{Id: "temperature", Type: proto.Metric_GAUGE, Value: -1}.Build(),
+			proto.Metric_builder{Id: "requests", Type: proto.Metric_COUNTER, Delta: -1}.Build(),
+		}}.Build(),
 	} {
 		resp, err := server.UpdateMetrics(ctx, req)
 		if err != nil || resp == nil {
@@ -92,11 +94,14 @@ func TestUpdateMetricsBatch(t *testing.T) {
 	if got, err := storage.GetGauge(ctx, "zero"); err != nil || got != 0 {
 		t.Fatalf("zero gauge = %v, %v; want 0", got, err)
 	}
+	if got, err := storage.GetCounter(ctx, "zeroCounter"); err != nil || got != 0 {
+		t.Fatalf("zero counter = %v, %v; want 0", got, err)
+	}
 	if len(observer.events) != 2 {
 		t.Fatalf("audit events = %d, want 2", len(observer.events))
 	}
 	event := observer.events[0]
-	if event.IPAddress != "192.0.2.10" || event.Timestamp == 0 || !reflect.DeepEqual(event.Metrics, []string{"temperature", "requests", "requests", "zero"}) {
+	if event.IPAddress != "192.0.2.10" || event.Timestamp == 0 || !reflect.DeepEqual(event.Metrics, []string{"temperature", "requests", "requests", "zero", "zeroCounter"}) {
 		t.Fatalf("incorrect audit event: %+v", event)
 	}
 }
@@ -107,19 +112,19 @@ func TestUpdateMetricsRejectsInvalidBatchBeforeStorage(t *testing.T) {
 		name   string
 	}{
 		{name: "nil metric"},
-		{name: "empty ID", metric: &proto.Metric{Type: proto.Metric_COUNTER, Delta: 1}},
-		{name: "unknown type", metric: &proto.Metric{Id: "bad", Type: proto.Metric_MType(99)}},
-		{name: "NaN", metric: &proto.Metric{Id: "bad", Value: math.NaN()}},
-		{name: "positive infinity", metric: &proto.Metric{Id: "bad", Value: math.Inf(1)}},
-		{name: "negative infinity", metric: &proto.Metric{Id: "bad", Value: math.Inf(-1)}},
+		{name: "empty ID", metric: proto.Metric_builder{Type: proto.Metric_COUNTER, Delta: 1}.Build()},
+		{name: "unknown type", metric: proto.Metric_builder{Id: "bad", Type: proto.Metric_MType(99)}.Build()},
+		{name: "NaN", metric: proto.Metric_builder{Id: "bad", Value: math.NaN()}.Build()},
+		{name: "positive infinity", metric: proto.Metric_builder{Id: "bad", Value: math.Inf(1)}.Build()},
+		{name: "negative infinity", metric: proto.Metric_builder{Id: "bad", Value: math.Inf(-1)}.Build()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := &batchStorage{MemStorage: repository.NewMemStorage("")}
 			server := grpcmetrics.NewMetricsServer(service.NewMetricsService(storage), nil)
-			_, err := server.UpdateMetrics(context.Background(), &proto.UpdateMetricsRequest{Metrics: []*proto.Metric{
-				{Id: "valid", Type: proto.Metric_COUNTER, Delta: 5}, tt.metric,
-			}})
+			_, err := server.UpdateMetrics(context.Background(), proto.UpdateMetricsRequest_builder{Metrics: []*proto.Metric{
+				proto.Metric_builder{Id: "valid", Type: proto.Metric_COUNTER, Delta: 5}.Build(), tt.metric,
+			}}.Build())
 			if status.Code(err) != codes.InvalidArgument {
 				t.Fatalf("code = %v, want InvalidArgument; error: %v", status.Code(err), err)
 			}
@@ -136,7 +141,7 @@ func TestUpdateMetricsEmptyAndMissingRequest(t *testing.T) {
 	if _, err := server.UpdateMetrics(context.Background(), nil); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("nil request error = %v, want InvalidArgument", err)
 	}
-	if resp, err := server.UpdateMetrics(context.Background(), &proto.UpdateMetricsRequest{}); resp == nil || err != nil {
+	if resp, err := server.UpdateMetrics(context.Background(), proto.UpdateMetricsRequest_builder{}.Build()); resp == nil || err != nil {
 		t.Fatalf("empty batch = %v, %v", resp, err)
 	}
 	if storage.calls != 0 {
@@ -160,7 +165,9 @@ func TestUpdateMetricsStorageErrors(t *testing.T) {
 			observer := &auditObserver{}
 			auditService.AddObserver(observer)
 			server := grpcmetrics.NewMetricsServer(service.NewMetricsService(storage), auditService)
-			_, err := server.UpdateMetrics(context.Background(), &proto.UpdateMetricsRequest{Metrics: []*proto.Metric{{Id: "counter", Type: proto.Metric_COUNTER, Delta: 1}}})
+			_, err := server.UpdateMetrics(context.Background(), proto.UpdateMetricsRequest_builder{Metrics: []*proto.Metric{
+				proto.Metric_builder{Id: "counter", Type: proto.Metric_COUNTER, Delta: 1}.Build(),
+			}}.Build())
 			if status.Code(err) != tt.code {
 				t.Fatalf("code = %v, want %v; error: %v", status.Code(err), tt.code, err)
 			}
@@ -176,7 +183,9 @@ func TestUpdateMetricsCancelledContext(t *testing.T) {
 	server := grpcmetrics.NewMetricsServer(service.NewMetricsService(storage), nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := server.UpdateMetrics(ctx, &proto.UpdateMetricsRequest{Metrics: []*proto.Metric{{Id: "counter", Type: proto.Metric_COUNTER}}})
+	_, err := server.UpdateMetrics(ctx, proto.UpdateMetricsRequest_builder{Metrics: []*proto.Metric{
+		proto.Metric_builder{Id: "counter", Type: proto.Metric_COUNTER}.Build(),
+	}}.Build())
 	if status.Code(err) != codes.Canceled || storage.calls != 0 {
 		t.Fatalf("error = %v, storage calls = %d; want Canceled, 0", err, storage.calls)
 	}
@@ -188,12 +197,21 @@ func TestMetricsGRPCRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	certFile, keyFile := testutil.NewTLSFiles(t)
+	serverCredentials, err := credentials.NewServerTLSFromFile(certFile, keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientCredentials, err := credentials.NewClientTLSFromFile(certFile, "localhost")
+	if err != nil {
+		t.Fatal(err)
+	}
 	listener := bufconn.Listen(1024 * 1024)
-	server := grpc.NewServer(grpc.UnaryInterceptor(interceptor))
+	server := grpc.NewServer(grpc.Creds(serverCredentials), grpc.UnaryInterceptor(interceptor))
 	proto.RegisterMetricsServer(server, grpcmetrics.NewMetricsServer(service.NewMetricsService(storage), nil))
 	t.Cleanup(server.Stop)
 	go func() { _ = server.Serve(listener) }()
-	conn, err := grpc.NewClient("passthrough:///metrics", grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+	conn, err := grpc.NewClient("passthrough:///metrics", grpc.WithTransportCredentials(clientCredentials), grpc.WithAuthority("localhost"), grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 		return listener.DialContext(ctx)
 	}))
 	if err != nil {
@@ -204,10 +222,10 @@ func TestMetricsGRPCRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	trustedCtx := metadata.AppendToOutgoingContext(ctx, "x-real-ip", "192.0.2.12")
-	req := &proto.UpdateMetricsRequest{Metrics: []*proto.Metric{
-		{Id: "gauge", Type: proto.Metric_GAUGE, Value: 12.25},
-		{Id: "counter", Type: proto.Metric_COUNTER, Delta: 3},
-	}}
+	req := proto.UpdateMetricsRequest_builder{Metrics: []*proto.Metric{
+		proto.Metric_builder{Id: "gauge", Type: proto.Metric_GAUGE, Value: 12.25}.Build(),
+		proto.Metric_builder{Id: "counter", Type: proto.Metric_COUNTER, Delta: 3}.Build(),
+	}}.Build()
 	if _, err := client.UpdateMetrics(trustedCtx, req); err != nil {
 		t.Fatal(err)
 	}

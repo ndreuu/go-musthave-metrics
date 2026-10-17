@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -16,6 +17,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 func newGRPCServer(cfg *serverconfig.Config, metricsService *service.MetricsService, auditService *audit.AuditService) (*grpc.Server, error) {
@@ -23,7 +25,20 @@ func newGRPCServer(cfg *serverconfig.Config, metricsService *service.MetricsServ
 	if err != nil {
 		return nil, err
 	}
-	server := grpc.NewServer(grpc.UnaryInterceptor(checkSubnet))
+	if cfg.GRPCCertFile == "" || cfg.GRPCKeyFile == "" {
+		return nil, fmt.Errorf("gRPC TLS certificate and private key files are required")
+	}
+	certificate, err := tls.LoadX509KeyPair(cfg.GRPCCertFile, cfg.GRPCKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load gRPC TLS certificate: %w", err)
+	}
+	server := grpc.NewServer(
+		grpc.Creds(credentials.NewTLS(&tls.Config{
+			Certificates: []tls.Certificate{certificate},
+			MinVersion:   tls.VersionTLS12,
+		})),
+		grpc.UnaryInterceptor(checkSubnet),
+	)
 	pb.RegisterMetricsServer(server, grpcmetrics.NewMetricsServer(metricsService, auditService))
 	return server, nil
 }
