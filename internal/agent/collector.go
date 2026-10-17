@@ -132,22 +132,6 @@ func (c *Collector) CollectGopsutil() {
 	}
 }
 
-// GetMetrics возвращает все собранные метрики.
-func (c *Collector) GetMetrics() []*Metric {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	result := make([]*Metric, 0, len(c.metrics))
-	for _, m := range c.metrics {
-		result = append(result, &Metric{
-			MType: m.MType,
-			Name:  m.Name,
-			Value: m.Value,
-		})
-	}
-	return result
-}
-
 func (c *Collector) DrainMetrics() []*Metric {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -177,20 +161,4 @@ func (c *Collector) DrainMetrics() []*Metric {
 	c.pollCount = 0
 
 	return result
-}
-
-// GetMetric возвращает метрику по имени.
-// Возвращает nil, если метрика не найдена.
-func (c *Collector) GetMetric(name string) *Metric {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if m, ok := c.metrics[name]; ok {
-		return &Metric{
-			MType: m.MType,
-			Name:  m.Name,
-			Value: m.Value,
-		}
-	}
-	return nil
 }

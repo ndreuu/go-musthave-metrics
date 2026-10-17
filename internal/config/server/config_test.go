@@ -1,12 +1,20 @@
 package server
 
 import (
+	"flag"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func getConfig(args []string, lookup func(string) (string, bool)) (*Config, error) {
+	flags := flag.NewFlagSet("server", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	return loadConfig(flags, args, lookup)
+}
 
 func lookupEnvironment(values map[string]string) func(string) (string, bool) {
 	return func(name string) (string, bool) { value, ok := values[name]; return value, ok }
@@ -29,6 +37,48 @@ func TestGetConfigDefaults(t *testing.T) {
 	want := &Config{Address: ":8080", LogLevel: "info", StoreInterval: 300}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("config = %#v, want %#v", got, want)
+	}
+}
+
+func TestGetConfigGRPCAddress(t *testing.T) {
+	path := writeConfig(t, `{"grpc_address":"file:3200"}`)
+	emptyPath := writeConfig(t, `{"grpc_address":""}`)
+	tests := []struct {
+		env  map[string]string
+		name string
+		want string
+		args []string
+	}{
+		{name: "default disables gRPC"},
+		{name: "JSON file", args: []string{"-c", path}, want: "file:3200"},
+		{name: "CLI flag", args: []string{"-grpc-address", "flag:3200"}, want: "flag:3200"},
+		{name: "environment", env: map[string]string{"GRPC_ADDRESS": "env:3200"}, want: "env:3200"},
+		{name: "flag overrides file", args: []string{"-c", path, "-grpc-address", "flag:3200"}, want: "flag:3200"},
+		{name: "environment overrides file", args: []string{"-c", path}, env: map[string]string{"GRPC_ADDRESS": "env:3200"}, want: "env:3200"},
+		{name: "environment overrides flag and file", args: []string{"-c", path, "-grpc-address", "flag:3200"}, env: map[string]string{"GRPC_ADDRESS": "env:3200"}, want: "env:3200"},
+		{name: "empty file disables gRPC", args: []string{"-c", emptyPath}},
+		{name: "empty flag overrides file", args: []string{"-c", path, "-grpc-address="}},
+		{name: "environment overrides empty flag", args: []string{"-c", path, "-grpc-address="}, env: map[string]string{"GRPC_ADDRESS": "env:3200"}, want: "env:3200"},
+		{name: "empty environment is absent", args: []string{"-c", path}, env: map[string]string{"GRPC_ADDRESS": ""}, want: "file:3200"},
+		{name: "IPv6 address is unchanged", args: []string{"-grpc-address", "[::1]:3200"}, want: "[::1]:3200"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := getConfig(tt.args, lookupEnvironment(tt.env))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.GRPCAddress != tt.want {
+				t.Fatalf("gRPC address = %q, want %q", got.GRPCAddress, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetConfigGRPCAddressWrongJSONType(t *testing.T) {
+	path := writeConfig(t, `{"grpc_address":3200}`)
+	if got, err := getConfig([]string{"-c", path}, lookupEnvironment(nil)); err == nil || got != nil {
+		t.Fatalf("config = %#v, error = %v; want nil config and error", got, err)
 	}
 }
 

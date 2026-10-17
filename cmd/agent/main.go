@@ -53,11 +53,27 @@ func main() {
 		zap.Duration("poll_interval", cfg.PollInterval),
 		zap.Duration("report_interval", cfg.ReportInterval),
 		zap.String("server_address", cfg.ServerAddress),
+		zap.String("grpc_address", cfg.GRPCAddress),
 		zap.Int("rate_limit", cfg.RateLimit),
 		zap.String("crypto_key", cfg.CryptoKey),
 	)
 	collector := agent.NewCollector()
-	sender := agent.NewSender(cfg.ServerAddress, cfg.Key, cfg.CryptoKey)
+	var sender metricSender
+	if cfg.GRPCAddress != "" {
+		grpcSender, senderErr := agent.NewGRPCSender(cfg.GRPCAddress)
+		if senderErr != nil {
+			log.Error("Failed to initialize gRPC sender", zap.Error(senderErr))
+			return
+		}
+		defer func() {
+			if closeErr := grpcSender.Close(); closeErr != nil {
+				log.Error("Failed to close gRPC connection", zap.Error(closeErr))
+			}
+		}()
+		sender = grpcSender
+	} else {
+		sender = agent.NewSender(cfg.ServerAddress, cfg.Key, cfg.CryptoKey)
+	}
 	if err := runAgent(ctx, cfg, collector, sender, log); err != nil {
 		log.Error("Agent stopped with an error", zap.Error(err))
 		return
@@ -72,7 +88,7 @@ type metricsCollector interface {
 }
 
 type metricSender interface {
-	Send(*agent.Metric) error
+	SendBatch([]*agent.Metric) error
 }
 
 func runAgent(ctx context.Context, cfg *agent.Config, collector metricsCollector, sender metricSender, log *zap.Logger) error {
@@ -84,16 +100,16 @@ func runAgent(ctx context.Context, cfg *agent.Config, collector metricsCollector
 		return pollMetrics(ctx, cfg.PollInterval, collector.CollectGopsutil, "Gopsutil", log)
 	})
 
-	metricChan := make(chan *agent.Metric, cfg.RateLimit*2)
+	metricChan := make(chan []*agent.Metric, cfg.RateLimit*2)
 	var pipeline errgroup.Group
 	for workerID := 0; workerID < cfg.RateLimit; workerID++ {
 		pipeline.Go(func() error {
 			var firstErr error
-			for metric := range metricChan {
-				if err := sender.Send(metric); err != nil {
-					log.Error("Failed to send metric", zap.Int("worker", workerID), zap.String("metric", metric.Name), zap.Error(err))
+			for metrics := range metricChan {
+				if err := sender.SendBatch(metrics); err != nil {
+					log.Error("Failed to send metrics batch", zap.Int("worker", workerID), zap.Int("count", len(metrics)), zap.Error(err))
 					if firstErr == nil {
-						firstErr = fmt.Errorf("send metric %s: %w", metric.Name, err)
+						firstErr = fmt.Errorf("send metrics batch: %w", err)
 					}
 				}
 			}
@@ -108,8 +124,8 @@ func runAgent(ctx context.Context, cfg *agent.Config, collector metricsCollector
 
 		enqueue := func() {
 			metrics := collector.DrainMetrics()
-			for _, metric := range metrics {
-				metricChan <- metric
+			if len(metrics) != 0 {
+				metricChan <- metrics
 			}
 			log.Debug("Metrics queued", zap.Int("count", len(metrics)))
 		}

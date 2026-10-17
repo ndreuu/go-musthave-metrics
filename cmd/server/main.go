@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -22,6 +23,7 @@ import (
 
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -113,6 +115,20 @@ func main() {
 	if routerErr != nil {
 		log.Fatal("Failed to configure HTTP router", zap.Error(routerErr))
 	}
+	var grpcServer *grpc.Server
+	var grpcListener net.Listener
+	if cfg.GRPCAddress != "" {
+		var grpcErr error
+		grpcServer, grpcErr = newGRPCServer(cfg, metricsService, auditService)
+		if grpcErr != nil {
+			log.Fatal("Failed to configure gRPC server", zap.Error(grpcErr))
+		}
+		grpcListener, grpcErr = net.Listen("tcp", cfg.GRPCAddress)
+		if grpcErr != nil {
+			log.Fatal("Failed to listen for gRPC", zap.Error(grpcErr))
+		}
+		log.Info("gRPC server starting", zap.String("address", grpcListener.Addr().String()))
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	defer stop()
@@ -159,7 +175,7 @@ func main() {
 		Handler: r,
 	}
 
-	if err := runHTTPServer(ctx, server); err != nil {
+	if err := runServers(ctx, server, grpcServer, grpcListener); err != nil {
 		log.Error("Server stopped with an error", zap.Error(err))
 	}
 

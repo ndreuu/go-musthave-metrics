@@ -20,21 +20,33 @@ func testEvent() *models.AuditEvent {
 	}
 }
 
-func TestAuditService_AddRemoveNotify(t *testing.T) {
-	s := NewAuditService()
-	obs := &FileObserver{}
+type recordingObserver struct {
+	event *models.AuditEvent
+}
 
+func (o *recordingObserver) Notify(event *models.AuditEvent) error {
+	o.event = event
+	return nil
+}
+
+func (o *recordingObserver) Close() error { return nil }
+
+func TestAuditService_AddNotify(t *testing.T) {
+	s := NewAuditService()
+	obs := &recordingObserver{}
+
+	s.AddObserver(&FileObserver{})
 	s.AddObserver(obs)
-	if len(s.observers) != 1 {
-		t.Fatalf("expected 1 observer, got %d", len(s.observers))
+	if len(s.observers) != 2 {
+		t.Fatalf("expected 2 observers, got %d", len(s.observers))
 	}
 
-	// NotifyObservers не должен паниковать и должен обойти ошибочный observer.
-	s.NotifyObservers(testEvent())
+	// Ошибка одного observer не должна мешать уведомлению остальных.
+	event := testEvent()
+	s.NotifyObservers(event)
 
-	s.RemoveObserver(obs)
-	if len(s.observers) != 0 {
-		t.Fatalf("expected 0 observers after remove, got %d", len(s.observers))
+	if obs.event != event {
+		t.Fatal("observer should receive the event after another observer fails")
 	}
 }
 

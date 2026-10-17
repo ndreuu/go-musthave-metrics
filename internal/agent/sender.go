@@ -8,11 +8,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptrace"
 	"net/netip"
-	"strconv"
 	"time"
 
 	"go-musthave-metrics/internal/crypto"
@@ -178,6 +178,7 @@ func (s *Sender) SendAll(metrics []*Metric) []error {
 
 // SendBatch отправляет пакет метрик одним запросом.
 // Использует эндпоинт /updates/ для пакетной загрузки.
+// Если пакет превышает лимит RSA-OAEP, отправляет метрики по отдельности.
 func (s *Sender) SendBatch(metrics []*Metric) error {
 	if len(metrics) == 0 {
 		return nil
@@ -186,9 +187,13 @@ func (s *Sender) SendBatch(metrics []*Metric) error {
 	cfg := retry.DefaultConfig()
 	ctx := context.Background()
 
-	return retry.Do(ctx, cfg, func() error {
+	err := retry.Do(ctx, cfg, func() error {
 		return s.sendBatchOnce(metrics)
 	})
+	if errors.Is(err, rsa.ErrMessageTooLong) {
+		return errors.Join(s.SendAll(metrics)...)
+	}
+	return err
 }
 
 func (s *Sender) sendBatchOnce(metrics []*Metric) error {
@@ -249,27 +254,4 @@ func (s *Sender) sendBatchOnce(metrics []*Metric) error {
 	}
 
 	return nil
-}
-
-// MetricGetter определяет интерфейс для получения метрик.
-type MetricGetter interface {
-	GetMetric(name string) *Metric
-}
-
-// SendMetricByName отправляет метрику по имени, получая её из getter.
-func (s *Sender) SendMetricByName(getter MetricGetter, name string) error {
-	metric := getter.GetMetric(name)
-	if metric == nil {
-		return fmt.Errorf("metric %s not found", name)
-	}
-	return s.Send(metric)
-}
-
-// FormatMetricValue форматирует значение метрики в строку.
-// Для counter возвращает целое число, для gauge - число с плавающей точкой.
-func FormatMetricValue(mType string, value float64) string {
-	if mType == "counter" {
-		return strconv.FormatInt(int64(value), 10)
-	}
-	return strconv.FormatFloat(value, 'f', -1, 64)
 }

@@ -25,6 +25,7 @@ func (rs *Config) Reset() {
 		return
 	}
 	rs.ServerAddress = ""
+	rs.GRPCAddress = ""
 	rs.Key = ""
 	rs.CryptoKey = ""
 	rs.PollInterval = 0

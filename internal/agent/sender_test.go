@@ -233,66 +233,6 @@ func TestSender_SendAll_WithErrors(t *testing.T) {
 	}
 }
 
-func TestSender_SendMetricByName(t *testing.T) {
-	var receivedURL string
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedURL = r.URL.String()
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	sender := NewSender(server.URL, "", "")
-	collector := NewCollector()
-	collector.Collect()
-
-	err := sender.SendMetricByName(collector, "Alloc")
-	if err != nil {
-		t.Fatalf("Expected no error, got %v", err)
-	}
-
-	if receivedURL != "/update" {
-		t.Errorf("Expected URL to be /update, got %s", receivedURL)
-	}
-}
-
-func TestSender_SendMetricByName_NotFound(t *testing.T) {
-	sender := NewSender("http://localhost:8080", "", "")
-	collector := NewCollector()
-
-	err := sender.SendMetricByName(collector, "NonExistingMetric")
-	if err == nil {
-		t.Fatal("Expected error for non-existing metric")
-	}
-	if !strings.Contains(err.Error(), "not found") {
-		t.Errorf("Expected 'not found' error, got %v", err)
-	}
-}
-
-func TestFormatMetricValue(t *testing.T) {
-	tests := []struct {
-		name     string
-		mType    string
-		expected string
-		value    float64
-	}{
-		{"counter integer", "counter", "42", 42},
-		{"counter large", "counter", "1000000", 1000000},
-		{"gauge integer", "gauge", "100", 100},
-		{"gauge float", "gauge", "123.456", 123.456},
-		{"gauge small", "gauge", "0.001", 0.001},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := FormatMetricValue(tt.mType, tt.value)
-			if result != tt.expected {
-				t.Errorf("Expected %s, got %s", tt.expected, result)
-			}
-		})
-	}
-}
-
 func TestSender_SendBatch(t *testing.T) {
 	var receivedURL string
 	var receivedMethod string
