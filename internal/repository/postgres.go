@@ -222,10 +222,6 @@ func (p *PostgresStorage) Close() error {
 	return p.db.Close()
 }
 
-func (p *PostgresStorage) GetDB() *sql.DB {
-	return p.db
-}
-
 func (p *PostgresStorage) Ping(ctx context.Context) error {
 	if p == nil || p.db == nil {
 		return fmt.Errorf("database is not configured")

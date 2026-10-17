@@ -3,7 +3,6 @@ package agent
 import (
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"time"
@@ -21,6 +20,7 @@ const (
 // generate:reset
 type Config struct {
 	ServerAddress  string
+	GRPCAddress    string
 	Key            string
 	CryptoKey      string
 	PollInterval   time.Duration
@@ -30,6 +30,7 @@ type Config struct {
 
 type configSource struct {
 	Address        *string `json:"address" flag:"a" env:"ADDRESS"`
+	GRPCAddress    *string `json:"grpc_address" flag:"grpc-address" env:"GRPC_ADDRESS"`
 	ReportInterval *string `json:"report_interval" flag:"r" env:"REPORT_INTERVAL"`
 	PollInterval   *string `json:"poll_interval" flag:"p" env:"POLL_INTERVAL"`
 	CryptoKey      *string `json:"crypto_key" flag:"crypto-key" env:"CRYPTO_KEY"`
@@ -43,25 +44,10 @@ func GetConfig() (*Config, error) {
 	return loadConfig(flag.NewFlagSet("agent", flag.ExitOnError), os.Args[1:], os.LookupEnv)
 }
 
-// NewConfig is retained for callers of the previous API.
-// Deprecated: use GetConfig to handle configuration errors without a panic.
-func NewConfig() *Config {
-	cfg, err := GetConfig()
-	if err != nil {
-		panic(err)
-	}
-	return cfg
-}
-
-func getConfig(args []string, lookup func(string) (string, bool)) (*Config, error) {
-	flags := flag.NewFlagSet("agent", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	return loadConfig(flags, args, lookup)
-}
-
 func loadConfig(flags *flag.FlagSet, args []string, lookup func(string) (string, bool)) (*Config, error) {
 	cli := configSource{
 		Address:        flags.String("a", defaultServerAddress, "address of the server"),
+		GRPCAddress:    flags.String("grpc-address", "", "gRPC server address; empty selects HTTP"),
 		ReportInterval: flags.String("r", defaultReportInterval, "report interval (seconds or Go duration)"),
 		PollInterval:   flags.String("p", defaultPollInterval, "poll interval (seconds or Go duration)"),
 		Key:            flags.String("k", "", "key for signing data"),
@@ -86,7 +72,7 @@ func loadConfig(flags *flag.FlagSet, args []string, lookup func(string) (string,
 	defaults := configSource{
 		Address: config.Pointer(defaultServerAddress), ReportInterval: config.Pointer(defaultReportInterval),
 		PollInterval: config.Pointer(defaultPollInterval), RateLimit: config.Pointer(defaultRateLimit),
-		Key: config.Pointer(""), CryptoKey: config.Pointer(""),
+		Key: config.Pointer(""), CryptoKey: config.Pointer(""), GRPCAddress: config.Pointer(""),
 	}
 	merged, err := config.Merge(defaults, file, env, cli)
 	if err != nil {
@@ -115,7 +101,7 @@ func loadConfig(flags *flag.FlagSet, args []string, lookup func(string) (string,
 		rate = 1
 	}
 	return &Config{
-		ServerAddress: address, Key: *merged.Key, CryptoKey: *merged.CryptoKey,
+		ServerAddress: address, GRPCAddress: *merged.GRPCAddress, Key: *merged.Key, CryptoKey: *merged.CryptoKey,
 		PollInterval: poll, ReportInterval: report, RateLimit: rate,
 	}, nil
 }

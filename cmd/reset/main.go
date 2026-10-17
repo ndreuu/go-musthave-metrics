@@ -38,7 +38,6 @@ var basicTypes = map[string]string{
 
 type pkgInfo struct {
 	name        string
-	dir         string
 	structs     map[string]*ast.StructType
 	hasReset    map[string]bool
 	markedNames map[string]bool
@@ -112,7 +111,6 @@ func loadPackage(dir string) (*pkgInfo, error) {
 	}
 
 	p := &pkgInfo{
-		dir:         dir,
 		structs:     make(map[string]*ast.StructType),
 		hasReset:    make(map[string]bool),
 		markedNames: make(map[string]bool),
@@ -279,7 +277,7 @@ func resetTarget(target string, typ ast.Expr, p *pkgInfo, indent int) []string {
 	case *ast.Ident:
 		return resetIdent(target, t, p, indent)
 	case *ast.SelectorExpr:
-		return resetSelector(target, t, p, indent)
+		return resetSelector(target, t, indent)
 	case *ast.StructType:
 		return structFieldsReset(target, t, p, indent)
 	}
@@ -311,7 +309,7 @@ func resetIdent(target string, id *ast.Ident, p *pkgInfo, indent int) []string {
 	return structFieldsReset(target, st, p, indent)
 }
 
-func resetSelector(target string, sel *ast.SelectorExpr, _ *pkgInfo, indent int) []string {
+func resetSelector(target string, sel *ast.SelectorExpr, indent int) []string {
 	if sel.Sel.Name == "Duration" {
 		return []string{pad(indent) + target + " = 0"}
 	}

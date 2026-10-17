@@ -4,6 +4,14 @@ import (
 	"testing"
 )
 
+func metricsByName(metrics []*Metric) map[string]*Metric {
+	indexed := make(map[string]*Metric, len(metrics))
+	for _, metric := range metrics {
+		indexed[metric.Name] = metric
+	}
+	return indexed
+}
+
 func TestNewCollector(t *testing.T) {
 	collector := NewCollector()
 
@@ -23,7 +31,7 @@ func TestCollector_Collect(t *testing.T) {
 
 	collector.Collect()
 
-	metrics := collector.GetMetrics()
+	metrics := collector.DrainMetrics()
 	if len(metrics) == 0 {
 		t.Fatal("Expected metrics to be collected")
 	}
@@ -37,18 +45,15 @@ func TestCollector_Collect(t *testing.T) {
 		"Sys", "TotalAlloc",
 	}
 
-	collectedNames := make(map[string]bool)
-	for _, m := range metrics {
-		collectedNames[m.Name] = true
-	}
+	collected := metricsByName(metrics)
 
 	for _, expectedMetric := range runtimeMetrics {
-		if !collectedNames[expectedMetric] {
+		if collected[expectedMetric] == nil {
 			t.Errorf("Metric %s should be collected", expectedMetric)
 		}
 	}
 
-	pollCountMetric := collector.GetMetric("PollCount")
+	pollCountMetric := collected["PollCount"]
 	if pollCountMetric == nil {
 		t.Fatal("PollCount metric should exist")
 	}
@@ -59,7 +64,7 @@ func TestCollector_Collect(t *testing.T) {
 		t.Errorf("PollCount should be 1 after first collection, got %f", pollCountMetric.Value)
 	}
 
-	randomValueMetric := collector.GetMetric("RandomValue")
+	randomValueMetric := collected["RandomValue"]
 	if randomValueMetric == nil {
 		t.Fatal("RandomValue metric should exist")
 	}
@@ -78,7 +83,7 @@ func TestCollector_Collect_MultipleTimes(t *testing.T) {
 	collector.Collect()
 	collector.Collect()
 
-	pollCountMetric := collector.GetMetric("PollCount")
+	pollCountMetric := metricsByName(collector.DrainMetrics())["PollCount"]
 	if pollCountMetric == nil {
 		t.Fatal("PollCount metric should exist")
 	}
@@ -87,11 +92,12 @@ func TestCollector_Collect_MultipleTimes(t *testing.T) {
 	}
 }
 
-func TestCollector_GetMetric(t *testing.T) {
+func TestCollector_DrainMetrics_DetachedSnapshot(t *testing.T) {
 	collector := NewCollector()
 	collector.Collect()
 
-	metric := collector.GetMetric("Alloc")
+	metrics := metricsByName(collector.DrainMetrics())
+	metric := metrics["Alloc"]
 	if metric == nil {
 		t.Fatal("Alloc metric should exist")
 	}
@@ -102,17 +108,27 @@ func TestCollector_GetMetric(t *testing.T) {
 		t.Errorf("Alloc should be a gauge, got %s", metric.MType)
 	}
 
-	nonExisting := collector.GetMetric("NonExistingMetric")
+	nonExisting := metrics["NonExistingMetric"]
 	if nonExisting != nil {
-		t.Error("NonExistingMetric should return nil")
+		t.Error("NonExistingMetric should not be returned")
+	}
+
+	original := *metric
+	metric.Name = "Modified"
+	metric.MType = "counter"
+	metric.Value = -1
+
+	next := metricsByName(collector.DrainMetrics())["Alloc"]
+	if next == nil || *next != original {
+		t.Fatalf("Changing a drained metric modified the collector: got %v, want %v", next, original)
 	}
 }
 
-func TestCollector_GetMetrics(t *testing.T) {
+func TestCollector_DrainMetrics_MetricNamesAndTypes(t *testing.T) {
 	collector := NewCollector()
 	collector.Collect()
 
-	metrics := collector.GetMetrics()
+	metrics := collector.DrainMetrics()
 	if len(metrics) == 0 {
 		t.Fatal("Expected metrics to be returned")
 	}
@@ -189,10 +205,7 @@ func TestCollector_CollectGopsutil(t *testing.T) {
 
 	collector.CollectGopsutil()
 
-	metrics := collector.GetMetrics()
-	_ = metrics
-
-	if m := collector.GetMetric("TotalMemory"); m != nil {
+	if m := metricsByName(collector.DrainMetrics())["TotalMemory"]; m != nil {
 		if m.MType != "gauge" {
 			t.Errorf("TotalMemory should be a gauge, got %s", m.MType)
 		}
@@ -202,6 +215,7 @@ func TestCollector_CollectGopsutil(t *testing.T) {
 func TestCollector_Collect_RuntimeMetricsTypes(t *testing.T) {
 	collector := NewCollector()
 	collector.Collect()
+	metrics := metricsByName(collector.DrainMetrics())
 
 	runtimeGauges := []string{
 		"Alloc", "BuckHashSys", "Frees", "GCCPUFraction", "GCSys",
@@ -213,7 +227,7 @@ func TestCollector_Collect_RuntimeMetricsTypes(t *testing.T) {
 	}
 
 	for _, metricName := range runtimeGauges {
-		metric := collector.GetMetric(metricName)
+		metric := metrics[metricName]
 		if metric == nil {
 			t.Errorf("Metric %s should exist", metricName)
 			continue
@@ -223,7 +237,7 @@ func TestCollector_Collect_RuntimeMetricsTypes(t *testing.T) {
 		}
 	}
 
-	pollCount := collector.GetMetric("PollCount")
+	pollCount := metrics["PollCount"]
 	if pollCount == nil {
 		t.Fatal("PollCount metric should exist")
 	}
