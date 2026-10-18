@@ -150,23 +150,3 @@ func BenchmarkMetricsService_UpdateMetricsBatch(b *testing.B) {
 		_ = service.UpdateMetricsBatch(ctx, metrics)
 	}
 }
-
-func BenchmarkMetricsService_ParseUpdatePath(b *testing.B) {
-	storage := repository.NewMemStorage("")
-	service := NewMetricsService(storage)
-
-	b.ReportAllocs()
-	b.Run("Gauge", func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_, _ = service.ParseUpdatePath("/update/gauge/test_gauge/123.456")
-		}
-	})
-
-	b.Run("Counter", func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_, _ = service.ParseUpdatePath("/update/counter/test_counter/100")
-		}
-	})
-}

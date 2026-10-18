@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,14 +17,13 @@ import (
 	"go-musthave-metrics/internal/crypto"
 	"go-musthave-metrics/internal/handler"
 	"go-musthave-metrics/internal/logger"
-	"go-musthave-metrics/internal/middleware"
 	"go-musthave-metrics/internal/repository"
 	"go-musthave-metrics/internal/service"
 	"go-musthave-metrics/internal/service/audit"
 
-	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -111,34 +111,23 @@ func main() {
 		pingHandler = handler.NewPingHandler(dbConn)
 	}
 
-	r := gin.New()
-	r.RedirectTrailingSlash = false
-
-	r.Use(gin.Recovery())
-	r.Use(middleware.RequestLogger(log))
-	r.Use(middleware.GzipUnmarshal())
-	r.Use(middleware.Gzip())
-
-	r.POST("/update/:type/:name/:value", metricsHandler.UpdateMetricHandler)
-	r.GET("/value/:type/:name", metricsHandler.GetMetricHandler)
-	r.GET("/", metricsHandler.ListMetricsHandler)
-
-	jsonRoutes := r.Group("/")
-	jsonRoutes.Use(middleware.Decrypt(privateKey))
-	jsonRoutes.Use(middleware.HashSHA256(cfg.Key))
-	{
-		jsonRoutes.POST("/update", metricsHandler.UpdateMetricJSONHandler)
-		jsonRoutes.POST("/update/", metricsHandler.UpdateMetricJSONHandler)
-
-		jsonRoutes.POST("/updates", metricsHandler.UpdateMetricsBatchHandler)
-		jsonRoutes.POST("/updates/", metricsHandler.UpdateMetricsBatchHandler)
-
-		jsonRoutes.POST("/value", metricsHandler.GetMetricJSONHandler)
-		jsonRoutes.POST("/value/", metricsHandler.GetMetricJSONHandler)
+	r, routerErr := newRouter(cfg, log, privateKey, metricsHandler, pingHandler)
+	if routerErr != nil {
+		log.Fatal("Failed to configure HTTP router", zap.Error(routerErr))
 	}
-
-	if pingHandler != nil {
-		r.GET("/ping", pingHandler.PingHandler)
+	var grpcServer *grpc.Server
+	var grpcListener net.Listener
+	if cfg.GRPCAddress != "" {
+		var grpcErr error
+		grpcServer, grpcErr = newGRPCServer(cfg, metricsService, auditService)
+		if grpcErr != nil {
+			log.Fatal("Failed to configure gRPC server", zap.Error(grpcErr))
+		}
+		grpcListener, grpcErr = net.Listen("tcp", cfg.GRPCAddress)
+		if grpcErr != nil {
+			log.Fatal("Failed to listen for gRPC", zap.Error(grpcErr))
+		}
+		log.Info("gRPC server starting", zap.String("address", grpcListener.Addr().String()))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
@@ -186,7 +175,7 @@ func main() {
 		Handler: r,
 	}
 
-	if err := runHTTPServer(ctx, server); err != nil {
+	if err := runServers(ctx, server, grpcServer, grpcListener); err != nil {
 		log.Error("Server stopped with an error", zap.Error(err))
 	}
 

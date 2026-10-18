@@ -43,6 +43,8 @@ func TestCollector_Reset(t *testing.T) {
 func TestConfig_Reset(t *testing.T) {
 	c := &Config{
 		ServerAddress:  "localhost:8080",
+		GRPCAddress:    "localhost:3200",
+		GRPCCAFile:     "ca.pem",
 		Key:            "secret",
 		PollInterval:   2 * time.Second,
 		ReportInterval: 10 * time.Second,
@@ -53,6 +55,12 @@ func TestConfig_Reset(t *testing.T) {
 
 	if c.ServerAddress != "" {
 		t.Errorf("expected empty ServerAddress, got %q", c.ServerAddress)
+	}
+	if c.GRPCAddress != "" {
+		t.Errorf("expected empty GRPCAddress, got %q", c.GRPCAddress)
+	}
+	if c.GRPCCAFile != "" {
+		t.Errorf("expected empty GRPCCAFile, got %q", c.GRPCCAFile)
 	}
 	if c.Key != "" {
 		t.Errorf("expected empty Key, got %q", c.Key)

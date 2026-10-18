@@ -1,11 +1,20 @@
 package server
 
 import (
+	"flag"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func getConfig(args []string, lookup func(string) (string, bool)) (*Config, error) {
+	flags := flag.NewFlagSet("server", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	return loadConfig(flags, args, lookup)
+}
 
 func lookupEnvironment(values map[string]string) func(string) (string, bool) {
 	return func(name string) (string, bool) { value, ok := values[name]; return value, ok }
@@ -28,6 +37,95 @@ func TestGetConfigDefaults(t *testing.T) {
 	want := &Config{Address: ":8080", LogLevel: "info", StoreInterval: 300}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("config = %#v, want %#v", got, want)
+	}
+}
+
+func TestGetConfigGRPCAddress(t *testing.T) {
+	path := writeConfig(t, `{"grpc_address":"file:3200"}`)
+	emptyPath := writeConfig(t, `{"grpc_address":""}`)
+	tests := []struct {
+		env  map[string]string
+		name string
+		want string
+		args []string
+	}{
+		{name: "default disables gRPC"},
+		{name: "JSON file", args: []string{"-c", path}, want: "file:3200"},
+		{name: "CLI flag", args: []string{"-grpc-address", "flag:3200"}, want: "flag:3200"},
+		{name: "environment", env: map[string]string{"GRPC_ADDRESS": "env:3200"}, want: "env:3200"},
+		{name: "flag overrides file", args: []string{"-c", path, "-grpc-address", "flag:3200"}, want: "flag:3200"},
+		{name: "environment overrides file", args: []string{"-c", path}, env: map[string]string{"GRPC_ADDRESS": "env:3200"}, want: "env:3200"},
+		{name: "environment overrides flag and file", args: []string{"-c", path, "-grpc-address", "flag:3200"}, env: map[string]string{"GRPC_ADDRESS": "env:3200"}, want: "env:3200"},
+		{name: "empty file disables gRPC", args: []string{"-c", emptyPath}},
+		{name: "empty flag overrides file", args: []string{"-c", path, "-grpc-address="}},
+		{name: "environment overrides empty flag", args: []string{"-c", path, "-grpc-address="}, env: map[string]string{"GRPC_ADDRESS": "env:3200"}, want: "env:3200"},
+		{name: "empty environment is absent", args: []string{"-c", path}, env: map[string]string{"GRPC_ADDRESS": ""}, want: "file:3200"},
+		{name: "IPv6 address is unchanged", args: []string{"-grpc-address", "[::1]:3200"}, want: "[::1]:3200"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := getConfig(tt.args, lookupEnvironment(tt.env))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.GRPCAddress != tt.want {
+				t.Fatalf("gRPC address = %q, want %q", got.GRPCAddress, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetConfigGRPCAddressWrongJSONType(t *testing.T) {
+	path := writeConfig(t, `{"grpc_address":3200}`)
+	if got, err := getConfig([]string{"-c", path}, lookupEnvironment(nil)); err == nil || got != nil {
+		t.Fatalf("config = %#v, error = %v; want nil config and error", got, err)
+	}
+}
+
+func TestGetConfigGRPCTLSFiles(t *testing.T) {
+	path := writeConfig(t, `{"grpc_cert_file":"file-cert.pem","grpc_key_file":"file-key.pem"}`)
+	emptyPath := writeConfig(t, `{"grpc_cert_file":"","grpc_key_file":""}`)
+	env := map[string]string{"GRPC_CERT_FILE": "env-cert.pem", "GRPC_KEY_FILE": "env-key.pem"}
+	tests := []struct {
+		name     string
+		args     []string
+		env      map[string]string
+		wantCert string
+		wantKey  string
+	}{
+		{name: "default"},
+		{name: "JSON file", args: []string{"-c", path}, wantCert: "file-cert.pem", wantKey: "file-key.pem"},
+		{name: "CLI flags", args: []string{"-grpc-cert-file", "flag-cert.pem", "-grpc-key-file", "flag-key.pem"}, wantCert: "flag-cert.pem", wantKey: "flag-key.pem"},
+		{name: "environment", env: env, wantCert: "env-cert.pem", wantKey: "env-key.pem"},
+		{name: "flags override file", args: []string{"-c", path, "-grpc-cert-file", "flag-cert.pem", "-grpc-key-file", "flag-key.pem"}, wantCert: "flag-cert.pem", wantKey: "flag-key.pem"},
+		{name: "environment overrides file", args: []string{"-c", path}, env: env, wantCert: "env-cert.pem", wantKey: "env-key.pem"},
+		{name: "environment overrides flags and file", args: []string{"-c", path, "-grpc-cert-file", "flag-cert.pem", "-grpc-key-file", "flag-key.pem"}, env: env, wantCert: "env-cert.pem", wantKey: "env-key.pem"},
+		{name: "empty JSON values", args: []string{"-c", emptyPath}},
+		{name: "empty flags override file", args: []string{"-c", path, "-grpc-cert-file=", "-grpc-key-file="}},
+		{name: "environment overrides empty flags", args: []string{"-c", path, "-grpc-cert-file=", "-grpc-key-file="}, env: env, wantCert: "env-cert.pem", wantKey: "env-key.pem"},
+		{name: "empty environment is absent", args: []string{"-c", path}, env: map[string]string{"GRPC_CERT_FILE": "", "GRPC_KEY_FILE": ""}, wantCert: "file-cert.pem", wantKey: "file-key.pem"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := getConfig(tt.args, lookupEnvironment(tt.env))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.GRPCCertFile != tt.wantCert || got.GRPCKeyFile != tt.wantKey {
+				t.Fatalf("gRPC TLS files = (%q, %q), want (%q, %q)", got.GRPCCertFile, got.GRPCKeyFile, tt.wantCert, tt.wantKey)
+			}
+		})
+	}
+}
+
+func TestGetConfigGRPCTLSFilesWrongJSONType(t *testing.T) {
+	for _, name := range []string{"grpc_cert_file", "grpc_key_file"} {
+		t.Run(name, func(t *testing.T) {
+			path := writeConfig(t, `{"`+name+`":true}`)
+			if got, err := getConfig([]string{"-c", path}, lookupEnvironment(nil)); err == nil || got != nil {
+				t.Fatalf("config = %#v, error = %v; want nil config and error", got, err)
+			}
+		})
 	}
 }
 
@@ -142,5 +240,68 @@ func TestGetConfigDuration(t *testing.T) {
 	got, err := getConfig([]string{"-config", path}, lookupEnvironment(nil))
 	if err != nil || got.StoreInterval != 60 {
 		t.Fatalf("config = %#v, error = %v", got, err)
+	}
+}
+
+func TestGetConfigTrustedSubnet(t *testing.T) {
+	path := writeConfig(t, `{"trusted_subnet":"192.0.2.0/24"}`)
+	emptyPath := writeConfig(t, `{"trusted_subnet":""}`)
+	tests := []struct {
+		env  map[string]string
+		name string
+		want string
+		args []string
+	}{
+		{name: "default is unrestricted"},
+		{name: "JSON file", args: []string{"-c", path}, want: "192.0.2.0/24"},
+		{name: "CLI flag", args: []string{"-t", "198.51.100.0/24"}, want: "198.51.100.0/24"},
+		{name: "environment", env: map[string]string{"TRUSTED_SUBNET": "203.0.113.0/24"}, want: "203.0.113.0/24"},
+		{name: "flag overrides file", args: []string{"-c", path, "-t", "198.51.100.0/24"}, want: "198.51.100.0/24"},
+		{name: "environment overrides flag and file", args: []string{"-c", path, "-t", "198.51.100.0/24"}, env: map[string]string{"TRUSTED_SUBNET": "203.0.113.0/24"}, want: "203.0.113.0/24"},
+		{name: "empty file is unrestricted", args: []string{"-c", emptyPath}},
+		{name: "empty flag overrides file", args: []string{"-c", path, "-t="}},
+		{name: "empty environment is absent", args: []string{"-c", path}, env: map[string]string{"TRUSTED_SUBNET": ""}, want: "192.0.2.0/24"},
+		{name: "empty environment without file is unrestricted", env: map[string]string{"TRUSTED_SUBNET": ""}},
+		{name: "IPv6 subnet", args: []string{"-t", "2001:db8::/32"}, want: "2001:db8::/32"},
+		{name: "host bits accepted", args: []string{"-t", "192.0.2.12/24"}, want: "192.0.2.12/24"},
+		{name: "invalid file overridden by valid flag", args: []string{"-c", writeConfig(t, `{"trusted_subnet":"invalid"}`), "-t", "198.51.100.0/24"}, want: "198.51.100.0/24"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := getConfig(tt.args, lookupEnvironment(tt.env))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.TrustedSubnet != tt.want {
+				t.Fatalf("trusted subnet = %q, want %q", got.TrustedSubnet, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetConfigInvalidTrustedSubnet(t *testing.T) {
+	path := writeConfig(t, `{"trusted_subnet":"192.0.2.0/33"}`)
+	tests := []struct {
+		env  map[string]string
+		name string
+		args []string
+	}{
+		{name: "invalid file subnet", args: []string{"-c", path}},
+		{name: "address without prefix", args: []string{"-t", "192.0.2.1"}},
+		{name: "invalid IPv4 address", args: []string{"-t", "192.0.2.256/24"}},
+		{name: "invalid IPv6 prefix", args: []string{"-t", "2001:db8::/129"}},
+		{name: "invalid environment subnet", env: map[string]string{"TRUSTED_SUBNET": "bad"}},
+		{name: "wrong JSON type", args: []string{"-c", writeConfig(t, `{"trusted_subnet":24}`)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := getConfig(tt.args, lookupEnvironment(tt.env))
+			if err == nil || got != nil {
+				t.Fatalf("config = %#v, error = %v; want nil config and error", got, err)
+			}
+			if tt.name != "wrong JSON type" && !strings.Contains(err.Error(), "trusted subnet") {
+				t.Fatalf("error = %q; want descriptive trusted subnet error", err)
+			}
+		})
 	}
 }

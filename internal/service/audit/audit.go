@@ -23,13 +23,6 @@ type Observer interface {
 	Close() error
 }
 
-// Subject определяет интерфейс субъекта для управления наблюдателями.
-type Subject interface {
-	AddObserver(observer Observer)
-	RemoveObserver(observer Observer)
-	NotifyObservers(event *models.AuditEvent)
-}
-
 // AuditService реализует паттерн Observer для аудита событий.
 type AuditService struct {
 	observers []Observer
@@ -50,27 +43,13 @@ func (s *AuditService) AddObserver(observer Observer) {
 	s.observers = append(s.observers, observer)
 }
 
-// RemoveObserver удаляет наблюдателя из списка.
-func (s *AuditService) RemoveObserver(observer Observer) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i, obs := range s.observers {
-		if obs == observer {
-			s.observers = append(s.observers[:i], s.observers[i+1:]...)
-			break
-		}
-	}
-}
-
 // NotifyObservers уведомляет всех наблюдателей о событии.
 func (s *AuditService) NotifyObservers(event *models.AuditEvent) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	for _, observer := range s.observers {
-		if err := observer.Notify(event); err != nil {
-			continue
-		}
+		_ = observer.Notify(event)
 	}
 }
 

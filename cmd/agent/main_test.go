@@ -36,9 +36,9 @@ func (c *snapshotCollector) DrainMetrics() []*agent.Metric {
 	return metrics
 }
 
-type sendFunc func(*agent.Metric) error
+type sendFunc func([]*agent.Metric) error
 
-func (f sendFunc) Send(metric *agent.Metric) error { return f(metric) }
+func (f sendFunc) SendBatch(metrics []*agent.Metric) error { return f(metrics) }
 
 func awaitAgent(t *testing.T, done <-chan error) error {
 	t.Helper()
@@ -71,10 +71,12 @@ func TestRunAgentFinishesBatchOnShutdown(t *testing.T) {
 		releaseOnce.Do(func() { close(release) })
 	})
 	var sent []*agent.Metric
-	sender := sendFunc(func(metric *agent.Metric) error {
+	var sentBatches [][]*agent.Metric
+	sender := sendFunc(func(metrics []*agent.Metric) error {
 		startedOnce.Do(func() { close(started) })
 		<-release
-		sent = append(sent, metric)
+		sent = append(sent, metrics...)
+		sentBatches = append(sentBatches, metrics)
 		return nil
 	})
 	cfg := &agent.Config{PollInterval: time.Hour, ReportInterval: time.Millisecond, RateLimit: 1}
@@ -93,6 +95,9 @@ func TestRunAgentFinishesBatchOnShutdown(t *testing.T) {
 	}
 	if len(sent) != len(batch)+1 {
 		t.Fatalf("sent %d metrics, want %d including the final snapshot", len(sent), len(batch)+1)
+	}
+	if len(sentBatches) != 2 || len(sentBatches[0]) != len(batch) || len(sentBatches[1]) != 1 {
+		t.Fatalf("sent batches = %v, want the complete snapshot and final snapshot", sentBatches)
 	}
 	var pollCount float64
 	for _, metric := range sent {
@@ -116,9 +121,11 @@ func TestRunAgentDrainsQueueAfterSendError(t *testing.T) {
 	cancel()
 	var mu sync.Mutex
 	var sent int
-	sender := sendFunc(func(*agent.Metric) error {
+	var requests int
+	sender := sendFunc(func(metrics []*agent.Metric) error {
 		mu.Lock()
-		sent++
+		sent += len(metrics)
+		requests++
 		mu.Unlock()
 		return wantErr
 	})
@@ -130,5 +137,8 @@ func TestRunAgentDrainsQueueAfterSendError(t *testing.T) {
 	}
 	if sent != len(batch) {
 		t.Fatalf("sent %d metrics, want all %d attempted", sent, len(batch))
+	}
+	if requests != 1 {
+		t.Fatalf("sent %d requests, want one batch", requests)
 	}
 }
